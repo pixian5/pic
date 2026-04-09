@@ -546,7 +546,7 @@ final class PicImageView: NSView {
             switch trackedEvent.type {
             case .leftMouseDragged:
                 let location = trackedEvent.locationInWindow
-                let delta = CGPoint(x: location.x - previousLocation.x, y: location.y - previousLocation.y)
+                let delta = CGPoint(x: location.x - previousLocation.x, y: previousLocation.y - location.y)
                 previousLocation = location
                 self.coordinator?.pan(by: delta)
             case .leftMouseUp:
