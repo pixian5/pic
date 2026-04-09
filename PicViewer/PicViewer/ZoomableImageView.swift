@@ -18,48 +18,57 @@ struct ZoomableImageView: NSViewRepresentable {
     var onDoubleClick: () -> Void
 
     func makeNSView(context: Context) -> PicScrollView {
-        let scroll       = PicScrollView()
+        let scroll = PicScrollView()
         scroll.coordinator = context.coordinator
         context.coordinator.scrollView = scroll
 
-        // ---- embedded image view ----
-        let iv           = PicImageView()
-        iv.imageScaling  = .scaleNone
-        iv.animates      = true      // plays GIFs
-        scroll.documentView = iv
-        context.coordinator.imageView = iv
+        let documentView = PicDocumentView()
+        let imageView = PicImageView()
+        imageView.imageScaling = .scaleNone
+        imageView.imageAlignment = .alignCenter
+        imageView.animates = true
+        documentView.addSubview(imageView)
 
-        // ---- scroll view config ----
-        scroll.hasHorizontalScroller    = true
-        scroll.hasVerticalScroller      = true
-        scroll.autohidesScrollers       = true
-        scroll.allowsMagnification      = true
-        scroll.minMagnification         = 0.02
-        scroll.maxMagnification         = 32.0
-        scroll.backgroundColor          = .black
-        scroll.drawsBackground          = true
+        scroll.documentView = documentView
+        context.coordinator.documentView = documentView
+        context.coordinator.imageView = imageView
 
-        // ---- zoom notifications ----
+        scroll.hasHorizontalScroller = true
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.allowsMagnification = true
+        scroll.minMagnification = 0.02
+        scroll.maxMagnification = 32.0
+        scroll.backgroundColor = .black
+        scroll.drawsBackground = true
+
         let nc = NotificationCenter.default
-        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomIn),     name: .zoomIn,     object: nil)
-        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomOut),    name: .zoomOut,    object: nil)
+        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomIn), name: .zoomIn, object: nil)
+        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomOut), name: .zoomOut, object: nil)
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomActual), name: .zoomActual, object: nil)
-        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomFit),    name: .zoomFit,    object: nil)
+        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomFit), name: .zoomFit, object: nil)
 
-        // ---- first image ----
         context.coordinator.setImage(image)
+        DispatchQueue.main.async {
+            scroll.focusForKeyboard()
+        }
 
         return scroll
     }
 
     func updateNSView(_ scroll: PicScrollView, context: Context) {
-        let c          = context.coordinator
-        c.onPrevious   = onPrevious
-        c.onNext       = onNext
-        c.onDoubleClick = onDoubleClick
+        let coordinator = context.coordinator
+        coordinator.onPrevious = onPrevious
+        coordinator.onNext = onNext
+        coordinator.onDoubleClick = onDoubleClick
 
-        if c.currentImage !== image {
-            c.setImage(image)
+        if coordinator.currentImage !== image {
+            coordinator.setImage(image)
+        } else {
+            coordinator.layoutDocumentForCurrentState()
+            DispatchQueue.main.async {
+                scroll.focusForKeyboard()
+            }
         }
     }
 
@@ -71,87 +80,132 @@ struct ZoomableImageView: NSViewRepresentable {
 
     final class Coordinator: NSObject {
 
-        var onPrevious:    () -> Void
-        var onNext:        () -> Void
+        var onPrevious: () -> Void
+        var onNext: () -> Void
         var onDoubleClick: () -> Void
 
         weak var scrollView: PicScrollView?
-        weak var imageView:  PicImageView?
-        var currentImage:    NSImage?
+        weak var documentView: PicDocumentView?
+        weak var imageView: PicImageView?
+        var currentImage: NSImage?
+        private var isUpdatingLayout = false
 
         init(onPrevious: @escaping () -> Void,
-             onNext:     @escaping () -> Void,
+             onNext: @escaping () -> Void,
              onDoubleClick: @escaping () -> Void)
         {
-            self.onPrevious    = onPrevious
-            self.onNext        = onNext
+            self.onPrevious = onPrevious
+            self.onNext = onNext
             self.onDoubleClick = onDoubleClick
         }
 
-        // MARK: Image loading
-
         func setImage(_ image: NSImage) {
             currentImage = image
-            guard let iv = imageView, let sv = scrollView else { return }
-            iv.image      = image
-            iv.frame.size = naturalSize(image)
+            guard let imageView else { return }
+            imageView.image = image
+            imageView.frame.size = naturalSize(image)
+
             DispatchQueue.main.async { [weak self] in
                 self?.fitToWindow()
+                self?.scrollView?.focusForKeyboard()
             }
         }
 
-        /// Returns the pixel size of the image (preferred) or the point size.
         private func naturalSize(_ image: NSImage) -> CGSize {
             if let rep = image.representations.first {
-                let pw = rep.pixelsWide, ph = rep.pixelsHigh
-                if pw > 0 && ph > 0 { return CGSize(width: pw, height: ph) }
+                let width = rep.pixelsWide
+                let height = rep.pixelsHigh
+                if width > 0, height > 0 {
+                    return CGSize(width: width, height: height)
+                }
             }
             return image.size
         }
 
-        // MARK: Zoom helpers
-
         func fitToWindow() {
-            guard let sv = scrollView, let iv = imageView else { return }
-            let view  = sv.contentSize
-            let img   = iv.frame.size
-            guard img.width > 0, img.height > 0,
-                  view.width > 0, view.height > 0 else { return }
+            guard let scrollView, let imageView else { return }
+            let viewportSize = scrollView.contentSize
+            let imageSize = imageView.frame.size
+            guard imageSize.width > 0, imageSize.height > 0,
+                  viewportSize.width > 0, viewportSize.height > 0 else { return }
 
-            let scale = min(view.width / img.width, view.height / img.height, 1.0)
-            sv.magnification = scale
+            let scale = min(viewportSize.width / imageSize.width, viewportSize.height / imageSize.height, 1.0)
+            scrollView.magnification = scale
+            layoutDocumentForCurrentState()
             centerDocument()
         }
 
-        func centerDocument() {
-            guard let sv = scrollView, let cv = sv.contentView as? NSClipView,
-                  let dv = sv.documentView else { return }
-            let doc  = dv.frame.size
-            let vis  = sv.contentSize
-            let x    = max(0, (doc.width  - vis.width)  / 2)
-            let y    = max(0, (doc.height - vis.height) / 2)
-            cv.scroll(to: NSPoint(x: x, y: y))
-            sv.reflectScrolledClipView(cv)
+        func layoutDocumentForCurrentState() {
+            guard !isUpdatingLayout,
+                  let scrollView,
+                  let documentView,
+                  let imageView else { return }
+
+            isUpdatingLayout = true
+            defer { isUpdatingLayout = false }
+
+            let imageSize = imageView.frame.size
+            guard imageSize.width > 0, imageSize.height > 0 else { return }
+
+            let magnification = max(scrollView.magnification, 0.0001)
+            let visibleRect = scrollView.documentVisibleRect
+            let minimumWidth = max(scrollView.contentSize.width / magnification, visibleRect.width)
+            let minimumHeight = max(scrollView.contentSize.height / magnification, visibleRect.height)
+            let documentSize = NSSize(
+                width: max(imageSize.width, minimumWidth),
+                height: max(imageSize.height, minimumHeight)
+            )
+
+            documentView.frame = NSRect(origin: .zero, size: documentSize)
+            imageView.frame = NSRect(
+                x: (documentSize.width - imageSize.width) / 2,
+                y: (documentSize.height - imageSize.height) / 2,
+                width: imageSize.width,
+                height: imageSize.height
+            )
+
+            documentView.needsLayout = true
         }
 
-        // MARK: Notification handlers
+        func centerDocument() {
+            guard let scrollView,
+                  let clipView = scrollView.contentView as NSClipView?,
+                  let documentView = scrollView.documentView else { return }
+
+            let visibleRect = scrollView.documentVisibleRect
+            let documentSize = documentView.frame.size
+            let origin = NSPoint(
+                x: max(0, (documentSize.width - visibleRect.width) / 2),
+                y: max(0, (documentSize.height - visibleRect.height) / 2)
+            )
+
+            clipView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clipView)
+        }
 
         @objc func zoomIn() {
-            guard let sv = scrollView else { return }
-            animate { sv.magnification = min(sv.magnification * 1.25, sv.maxMagnification) }
+            guard let scrollView else { return }
+            animate {
+                scrollView.magnification = min(scrollView.magnification * 1.25, scrollView.maxMagnification)
+            }
+            layoutDocumentForCurrentState()
         }
 
         @objc func zoomOut() {
-            guard let sv = scrollView else { return }
-            animate { sv.magnification = max(sv.magnification * 0.8, sv.minMagnification) }
+            guard let scrollView else { return }
+            animate {
+                scrollView.magnification = max(scrollView.magnification * 0.8, scrollView.minMagnification)
+            }
+            layoutDocumentForCurrentState()
         }
 
         @objc func zoomActual() {
-            guard let sv = scrollView else { return }
-            animate { sv.magnification = 1.0 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.centerDocument()
+            guard let scrollView else { return }
+            animate {
+                scrollView.magnification = 1.0
             }
+            layoutDocumentForCurrentState()
+            centerDocument()
         }
 
         @objc func zoomFit() {
@@ -159,57 +213,91 @@ struct ZoomableImageView: NSViewRepresentable {
         }
 
         private func animate(_ block: @escaping () -> Void) {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.18
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
                 block()
             }
         }
 
-        deinit { NotificationCenter.default.removeObserver(self) }
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
     }
 }
 
 // MARK: - PicScrollView
 
-/// Custom NSScrollView:
-///   • Mouse-wheel → zoom centred on cursor
-///   • Trackpad scroll → native pan (super)
 final class PicScrollView: NSScrollView {
 
     weak var coordinator: ZoomableImageView.Coordinator?
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.focusForKeyboard()
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        coordinator?.layoutDocumentForCurrentState()
+    }
+
     override func scrollWheel(with event: NSEvent) {
-        // NSScrollingPhase.none means a physical mouse wheel (discrete events)
-        // Trackpad scrolls have a phase set (began / changed / ended)
-        if event.phase == .none && event.momentumPhase == .none {
+        focusForKeyboard()
+        if event.phase == [] && event.momentumPhase == [] {
             let delta = event.scrollingDeltaY
             guard delta != 0 else { return }
-            let factor  = delta > 0 ? 1.12 : (1.0 / 1.12)
-            let pt      = contentView.convert(event.locationInWindow, from: nil)
-            let newMag  = (magnification * factor).clamped(to: minMagnification...maxMagnification)
-            setMagnification(newMag, centeredAt: pt)
+            let factor = delta > 0 ? 1.12 : (1.0 / 1.12)
+            let point = contentView.convert(event.locationInWindow, from: nil)
+            let newMagnification = (magnification * factor).clamped(to: minMagnification...maxMagnification)
+            setMagnification(newMagnification, centeredAt: point)
+            coordinator?.layoutDocumentForCurrentState()
         } else {
             super.scrollWheel(with: event)
+            coordinator?.layoutDocumentForCurrentState()
         }
+    }
+
+    override func magnify(with event: NSEvent) {
+        focusForKeyboard()
+        super.magnify(with: event)
+        coordinator?.layoutDocumentForCurrentState()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        focusForKeyboard()
+        super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 123, 126: coordinator?.onPrevious()   // ← ↑
-        case 124, 125: coordinator?.onNext()        // → ↓
-        case 53:       // Esc – exit fullscreen
+        case 123, 126:
+            coordinator?.onPrevious()
+        case 124, 125:
+            coordinator?.onNext()
+        case 53:
             NSApp.keyWindow?.toggleFullScreen(nil)
         default:
             super.keyDown(with: event)
         }
     }
+
+    func focusForKeyboard() {
+        window?.makeFirstResponder(self)
+    }
+}
+
+// MARK: - PicDocumentView
+
+final class PicDocumentView: NSView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - PicImageView
 
-/// Custom NSImageView that fires double-click and forwards key events.
 final class PicImageView: NSImageView {
 
     override var acceptsFirstResponder: Bool { true }
@@ -219,6 +307,7 @@ final class PicImageView: NSImageView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        (enclosingScrollView as? PicScrollView)?.focusForKeyboard()
         if event.clickCount == 2 {
             coordinator?.onDoubleClick()
         } else {

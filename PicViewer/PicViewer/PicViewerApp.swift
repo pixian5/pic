@@ -9,7 +9,7 @@ struct PicViewerApp: App {
     @StateObject private var imageManager = ImageManager()
 
     var body: some Scene {
-        WindowGroup {
+        Window("PicViewer", id: "main") {
             ContentView()
                 .environmentObject(imageManager)
                 .frame(minWidth: 480, minHeight: 320)
@@ -69,6 +69,12 @@ struct PicViewerApp: App {
                     NotificationCenter.default.post(name: .nextImage, object: nil)
                 }
                 .keyboardShortcut("]", modifiers: .command)
+            }
+
+            CommandMenu("Association") {
+                Button("Set PicViewer as Default Viewer") {
+                    imageManager.setAsDefaultViewer()
+                }
             }
         }
     }

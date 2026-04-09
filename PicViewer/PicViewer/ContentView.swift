@@ -142,6 +142,9 @@ struct WelcomeView: View {
                 Button("Open Folder…") { imageManager.openFolderPicker() }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                     .controlSize(.large)
+
+                Button("Set as Default Viewer") { imageManager.setAsDefaultViewer() }
+                    .controlSize(.large)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -183,6 +186,12 @@ struct OverlayUI: View {
                 Image(systemName: "folder").font(.system(size: 14))
             }
             .help("Open Folder (⇧⌘O)")
+            .glassButton()
+
+            Button { imageManager.setAsDefaultViewer() } label: {
+                Image(systemName: "checkmark.circle").font(.system(size: 14))
+            }
+            .help("Set PicViewer as the default viewer")
             .glassButton()
 
             Spacer()

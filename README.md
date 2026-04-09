@@ -9,6 +9,7 @@ A clean, native macOS image viewer built with **Swift + SwiftUI + AppKit**.
 | Category | Details |
 |---|---|
 | **Formats** | jpg · jpeg · png · webp · gif (animated) · bmp · tiff · heic · heif |
+| **Association** | Can register itself as the default viewer for all supported formats from inside the app |
 | **Navigation** | ← → ↑ ↓ arrow keys · ⌘[ / ⌘] menu shortcuts · on-screen prev/next buttons |
 | **Zoom** | Mouse-wheel zoom centred on cursor · trackpad pinch-to-zoom · ⌘+ / ⌘− / ⌘0 (actual size) / ⌘9 (fit to window) |
 | **Pan** | Two-finger trackpad scroll · drag when zoomed in |
@@ -61,6 +62,24 @@ PicViewer/
 | `⌘O` | Open image file |
 | `⇧⌘O` | Open folder |
 | `Esc` | Exit fullscreen |
+
+---
+
+## File Association
+
+Use `Association` → `Set PicViewer as Default Viewer` in the menu bar, or click the same button on the welcome screen / top toolbar.
+
+PicViewer will ask macOS to become the default viewer for:
+
+- `jpg` / `jpeg`
+- `png`
+- `gif`
+- `bmp`
+- `tiff` / `tif`
+- `heic` / `heif`
+- `webp`
+
+If Finder still shows the old app for some existing files, relaunch Finder once or reopen the file after registration so LaunchServices refreshes the association cache.
 
 ---
 

@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import CoreServices
 import UniformTypeIdentifiers
 
 // MARK: - ImageManager
@@ -20,6 +21,17 @@ final class ImageManager: ObservableObject {
     static let supportedExtensions: Set<String> = [
         "jpg", "jpeg", "png", "webp", "gif",
         "bmp", "tiff", "tif", "heic", "heif"
+    ]
+    static let supportedTypeIdentifiers: [String] = [
+        "public.jpeg",
+        "public.png",
+        "com.compuserve.gif",
+        "public.tiff",
+        "public.bmp",
+        "public.heic",
+        "public.heif",
+        "public.webp",
+        "org.webmproject.webp",
     ]
 
     // MARK: Computed helpers
@@ -123,6 +135,37 @@ final class ImageManager: ObservableObject {
         }
     }
 
+    func setAsDefaultViewer() {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            presentAlert(
+                title: "Unable to update file associations",
+                message: "The app bundle identifier is missing, so macOS could not register PicViewer as the default viewer."
+            )
+            return
+        }
+
+        let failures = Self.supportedTypeIdentifiers.filter { identifier in
+            LSSetDefaultRoleHandlerForContentType(
+                identifier as CFString,
+                .all,
+                bundleIdentifier as CFString
+            ) != noErr
+        }
+
+        if failures.isEmpty {
+            presentAlert(
+                title: "PicViewer is now the default viewer",
+                message: "macOS has been asked to open supported image formats with PicViewer by default."
+            )
+        } else {
+            let list = failures.joined(separator: ", ")
+            presentAlert(
+                title: "Some file associations could not be updated",
+                message: "macOS rejected these content types: \(list)"
+            )
+        }
+    }
+
     // MARK: - Private helpers
 
     func loadCurrentImage() {
@@ -133,15 +176,27 @@ final class ImageManager: ObservableObject {
         isLoading    = true
         currentImage = nil
         let capture  = url
+        let expectedURL = capture.standardizedFileURL
 
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let img = NSImage(contentsOf: capture)
-            await MainActor.run {
-                // Only apply if we're still on the same image
-                guard let self, self.currentURL?.standardizedFileURL == capture.standardizedFileURL else { return }
-                self.currentImage = img
-                self.isLoading    = false
-            }
+        Task { [weak self, capture, expectedURL] in
+            let img = await Task.detached(priority: .userInitiated) {
+                NSImage(contentsOf: capture)
+            }.value
+
+            // Only apply if we're still on the same image
+            guard let self else { return }
+            guard self.currentURL?.standardizedFileURL == expectedURL else { return }
+            self.currentImage = img
+            self.isLoading    = false
         }
+    }
+
+    private func presentAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 }

@@ -32,11 +32,24 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Image</string>
+			<string>Supported Image</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>jpg</string>
+				<string>jpeg</string>
+				<string>png</string>
+				<string>gif</string>
+				<string>bmp</string>
+				<string>tiff</string>
+				<string>tif</string>
+				<string>heic</string>
+				<string>heif</string>
+				<string>webp</string>
+			</array>
 			<key>LSHandlerRank</key>
-			<string>Alternate</string>
+			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>public.jpeg</string>
@@ -45,7 +58,9 @@
 				<string>public.tiff</string>
 				<string>public.bmp</string>
 				<string>public.heic</string>
+				<string>public.heif</string>
 				<string>public.webp</string>
+				<string>org.webmproject.webp</string>
 			</array>
 		</dict>
 	</array>
