@@ -38,8 +38,17 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .nextImage))     { _ in navigateNext()     }
         // Auto-hide overlay after inactivity
         .onContinuousHover { _ in bumpOverlayTimer() }
-        .onAppear  { restoreWindowFrame() }
+        .onAppear  {
+            restoreWindowFrame()
+            updateWindowTitle()
+            if imageManager.hasImages {
+                showOverlay = false
+            }
+        }
         .onDisappear { saveWindowFrame() }
+        .onChange(of: imageManager.currentURL?.path) { _, _ in
+            updateWindowTitle()
+        }
     }
 
     // MARK: Image display with cross-fade
@@ -71,12 +80,10 @@ struct ContentView: View {
 
     private func navigateNext() {
         imageManager.goToNext()
-        bumpOverlayTimer()
     }
 
     private func navigatePrevious() {
         imageManager.goToPrevious()
-        bumpOverlayTimer()
     }
 
     // MARK: Fullscreen
@@ -114,6 +121,11 @@ struct ContentView: View {
         if let win = NSApp.windows.first {
             UserDefaults.standard.set(NSStringFromRect(win.frame), forKey: "windowFrame")
         }
+    }
+
+    private func updateWindowTitle() {
+        guard let window = NSApp.windows.first else { return }
+        window.title = imageManager.currentURL?.lastPathComponent ?? "PicViewer"
     }
 }
 
