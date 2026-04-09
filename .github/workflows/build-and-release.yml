@@ -1,0 +1,139 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - 'copilot/**'   # also build on feature branches so CI can be verified
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build macOS App & Create Release
+    runs-on: macos-15
+    permissions:
+      contents: write   # needed to create releases and upload assets
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Compute version number ─────────────────────────────────────────────
+      - name: Compute version
+        id: version
+        run: |
+          # Use the total number of commits as a monotonically increasing version.
+          COUNT=$(git rev-list --count HEAD)
+          echo "VERSION=${COUNT}" >> "$GITHUB_OUTPUT"
+          echo "TAG=v${COUNT}"    >> "$GITHUB_OUTPUT"
+          echo "Building version ${COUNT}"
+
+      # ── 3. Select Xcode ───────────────────────────────────────────────────────
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      # ── 4. Build (no code signing) ────────────────────────────────────────────
+      - name: Build PicViewer
+        working-directory: PicViewer
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project PicViewer.xcodeproj \
+            -scheme PicViewer \
+            -configuration Release \
+            -derivedDataPath ./build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.VERSION }}" \
+            build \
+            | xcpretty || true
+
+      # ── 5. Locate the built .app ──────────────────────────────────────────────
+      - name: Locate .app
+        id: locate
+        working-directory: PicViewer
+        run: |
+          APP=$(find ./build -name "PicViewer.app" -type d | head -1)
+          echo "APP_PATH=${APP}" >> "$GITHUB_OUTPUT"
+          echo "Found app at: ${APP}"
+
+      # ── 6. Create DMG ─────────────────────────────────────────────────────────
+      - name: Create DMG
+        working-directory: PicViewer
+        run: |
+          set -euo pipefail
+          APP="${{ steps.locate.outputs.APP_PATH }}"
+          DMG_STAGING="./dmg_staging"
+          mkdir -p "$DMG_STAGING"
+          cp -R "$APP" "$DMG_STAGING/"
+
+          # Create a symlink to /Applications for drag-to-install
+          ln -s /Applications "$DMG_STAGING/Applications"
+
+          hdiutil create \
+            -volname "PicViewer" \
+            -srcfolder "$DMG_STAGING" \
+            -ov \
+            -format UDZO \
+            ./PicViewer-${{ steps.version.outputs.VERSION }}.dmg
+
+          echo "DMG created:"
+          ls -lh ./PicViewer-${{ steps.version.outputs.VERSION }}.dmg
+
+      # ── 7. Create zip (as an alternative artifact) ────────────────────────────
+      - name: Create ZIP
+        working-directory: PicViewer
+        run: |
+          APP="${{ steps.locate.outputs.APP_PATH }}"
+          ditto -c -k --keepParent "$APP" \
+            ./PicViewer-${{ steps.version.outputs.VERSION }}.zip
+          echo "ZIP created:"
+          ls -lh ./PicViewer-${{ steps.version.outputs.VERSION }}.zip
+
+      # ── 8. Upload artifacts ───────────────────────────────────────────────────
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PicViewer-${{ steps.version.outputs.VERSION }}
+          path: |
+            PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.dmg
+            PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.zip
+
+      # ── 9. Create GitHub Release ──────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.TAG }}
+          name: "PicViewer ${{ steps.version.outputs.TAG }}"
+          body: |
+            ## PicViewer ${{ steps.version.outputs.TAG }}
+
+            macOS image viewer built automatically from commit `${{ github.sha }}`.
+
+            ### Installation
+            1. Download `PicViewer-${{ steps.version.outputs.VERSION }}.dmg`
+            2. Open the DMG and drag **PicViewer.app** to your Applications folder
+            3. Right-click → Open on first launch (unsigned build)
+
+            ### Features
+            - Browse all images in a folder (jpg, jpeg, png, webp, gif, bmp, tiff, heic)
+            - Keyboard navigation: ← → ↑ ↓ arrow keys, ⌘[ / ⌘]
+            - Scroll-wheel zoom centred on cursor; trackpad pinch-to-zoom & pan
+            - Double-click or ⌃⌘F for fullscreen
+            - ⌘+ / ⌘- / ⌘0 (actual size) / ⌘9 (fit to window)
+            - Shows image counter (e.g. 3 / 25) and filename
+            - Auto-hiding overlay; window size remembered across sessions
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: false
+          files: |
+            PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.dmg
+            PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
