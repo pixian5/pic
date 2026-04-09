@@ -12,6 +12,7 @@ struct ContentView: View {
     @State private var hideControlsTask: Task<Void, Never>? = nil
     @State private var activityMonitor: Any? = nil
     @State private var keyMonitor: Any? = nil
+    @State private var viewportSnapshot: ImageViewportSnapshot? = nil
 
     var body: some View {
         ZStack {
@@ -27,6 +28,9 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .onReceive(NotificationCenter.default.publisher(for: .previousImage)) { _ in navigatePrevious() }
         .onReceive(NotificationCenter.default.publisher(for: .nextImage)) { _ in navigateNext() }
+        .onReceive(NotificationCenter.default.publisher(for: .imageViewportChanged)) { notification in
+            viewportSnapshot = notification.object as? ImageViewportSnapshot
+        }
         .onAppear {
             restoreWindowFrame()
             updateWindowTitle()
@@ -40,6 +44,7 @@ struct ContentView: View {
         }
         .onChange(of: imageManager.currentURL?.path) { _, _ in
             updateWindowTitle()
+            viewportSnapshot = nil
         }
         .onChange(of: imageManager.currentIndex) { _, _ in
             if imageManager.hasImages {
@@ -191,7 +196,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var floatingControlsOverlay: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack {
             if showInfoPanel, let details = imageManager.currentImageDetails {
                 HStack(spacing: 0) {
                     infoPanel(details)
@@ -201,33 +206,51 @@ struct ContentView: View {
                 .padding(.leading, 12)
             }
 
+            if let snapshot = viewportSnapshot, snapshot.shouldShowMiniMap {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        miniMap(snapshot)
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+            }
+
             if showControls {
-                HStack(spacing: 10) {
-                    overlayButton(systemName: "minus.magnifyingglass", help: "缩小") {
-                        NotificationCenter.default.post(name: .zoomOut, object: nil)
-                        bumpControlsVisibility()
-                    }
-                    overlayButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "原图尺寸") {
-                        NotificationCenter.default.post(name: .zoomActual, object: nil)
-                        bumpControlsVisibility()
-                    }
-                    overlayButton(systemName: "plus.magnifyingglass", help: "放大") {
-                        NotificationCenter.default.post(name: .zoomIn, object: nil)
-                        bumpControlsVisibility()
-                    }
-                    overlayButton(systemName: showInfoPanel ? "info.circle.fill" : "info.circle", help: "图片信息") {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            showInfoPanel.toggle()
+                VStack {
+                    HStack {
+                        Spacer()
+                        HStack(spacing: 10) {
+                            overlayButton(systemName: "minus.magnifyingglass", help: "缩小") {
+                                NotificationCenter.default.post(name: .zoomOut, object: nil)
+                                bumpControlsVisibility()
+                            }
+                            overlayButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "原图尺寸") {
+                                NotificationCenter.default.post(name: .zoomActual, object: nil)
+                                bumpControlsVisibility()
+                            }
+                            overlayButton(systemName: "plus.magnifyingglass", help: "放大") {
+                                NotificationCenter.default.post(name: .zoomIn, object: nil)
+                                bumpControlsVisibility()
+                            }
+                            overlayButton(systemName: showInfoPanel ? "info.circle.fill" : "info.circle", help: "图片信息") {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    showInfoPanel.toggle()
+                                }
+                                bumpControlsVisibility()
+                            }
                         }
-                        bumpControlsVisibility()
                     }
+                    Spacer()
                 }
                 .padding(.top, 12)
                 .padding(.trailing, 12)
                 .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(true)
     }
 
@@ -265,6 +288,42 @@ struct ContentView: View {
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.black.opacity(0.72))
+        )
+    }
+
+    private func miniMap(_ snapshot: ImageViewportSnapshot) -> some View {
+        let visible = snapshot.normalizedVisibleRect
+
+        return ZStack(alignment: .topLeading) {
+            Image(nsImage: snapshot.image)
+                .resizable()
+                .aspectRatio(snapshot.imageNaturalSize, contentMode: .fit)
+                .frame(width: 140, height: 140)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            GeometryReader { geometry in
+                let size = geometry.size
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .stroke(Color.white, lineWidth: 1.5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(Color.white.opacity(0.12))
+                    )
+                    .frame(
+                        width: max(visible.width * size.width, 10),
+                        height: max(visible.height * size.height, 10)
+                    )
+                    .offset(
+                        x: visible.minX * size.width,
+                        y: visible.minY * size.height
+                    )
+            }
+            .frame(width: 140, height: 140)
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.62))
         )
     }
 

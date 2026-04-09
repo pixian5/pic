@@ -1,6 +1,31 @@
 import AppKit
 import SwiftUI
 
+struct ImageViewportSnapshot {
+    let image: NSImage
+    let imageRect: CGRect
+    let visibleRect: CGRect
+    let imageNaturalSize: CGSize
+
+    var shouldShowMiniMap: Bool {
+        visibleRect.width + 0.5 < imageRect.width || visibleRect.height + 0.5 < imageRect.height
+    }
+
+    var normalizedVisibleRect: CGRect {
+        guard imageRect.width > 0, imageRect.height > 0 else { return .zero }
+
+        let intersection = visibleRect.intersection(imageRect)
+        guard !intersection.isNull, !intersection.isEmpty else { return .zero }
+
+        return CGRect(
+            x: (intersection.minX - imageRect.minX) / imageRect.width,
+            y: (intersection.minY - imageRect.minY) / imageRect.height,
+            width: intersection.width / imageRect.width,
+            height: intersection.height / imageRect.height
+        )
+    }
+}
+
 // MARK: - ZoomableImageView
 /// A SwiftUI wrapper around an NSScrollView that provides:
 ///   • Mouse-wheel zoom centred on the cursor
@@ -124,6 +149,7 @@ struct ZoomableImageView: NSViewRepresentable {
             displayMode = .fitToWindow
             pendingDisplayMode = .fitToWindow
             lastViewportSize = .zero
+            publishViewportSnapshot()
         }
 
         func applyInitialDisplayMode() {
@@ -289,6 +315,7 @@ struct ZoomableImageView: NSViewRepresentable {
             documentView.needsLayout = true
             documentView.needsDisplay = true
             imageView.needsDisplay = true
+            publishViewportSnapshot()
         }
 
         func centerDocument() {
@@ -305,6 +332,7 @@ struct ZoomableImageView: NSViewRepresentable {
 
             clipView.scroll(to: origin)
             scrollView.reflectScrolledClipView(clipView)
+            publishViewportSnapshot()
         }
 
         @objc func zoomIn() {
@@ -347,6 +375,41 @@ struct ZoomableImageView: NSViewRepresentable {
                 context.duration = 0.18
                 block()
             }
+        }
+
+        func pan(by delta: CGPoint) {
+            guard let scrollView,
+                  let clipView = scrollView.contentView as NSClipView?,
+                  let documentView = scrollView.documentView else { return }
+
+            let documentSize = documentView.frame.size
+            let visibleSize = clipView.bounds.size
+            let maxX = max(0, documentSize.width - visibleSize.width)
+            let maxY = max(0, documentSize.height - visibleSize.height)
+
+            let nextOrigin = CGPoint(
+                x: (clipView.bounds.origin.x - delta.x).clamped(to: 0...maxX),
+                y: (clipView.bounds.origin.y - delta.y).clamped(to: 0...maxY)
+            )
+
+            clipView.scroll(to: nextOrigin)
+            scrollView.reflectScrolledClipView(clipView)
+            publishViewportSnapshot()
+        }
+
+        private func publishViewportSnapshot() {
+            guard let currentImage,
+                  let scrollView,
+                  let imageView else { return }
+
+            let snapshot = ImageViewportSnapshot(
+                image: currentImage,
+                imageRect: imageView.frame,
+                visibleRect: scrollView.documentVisibleRect,
+                imageNaturalSize: imageNaturalSize
+            )
+
+            NotificationCenter.default.post(name: .imageViewportChanged, object: snapshot)
         }
 
         deinit {
@@ -471,8 +534,26 @@ final class PicImageView: NSView {
         (enclosingScrollView as? PicScrollView)?.focusForKeyboard()
         if event.clickCount == 2 {
             coordinator?.onDoubleClick()
-        } else {
-            super.mouseDown(with: event)
+            return
+        }
+
+        var previousLocation = convert(event.locationInWindow, from: nil)
+
+        window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { [weak self] trackedEvent, stop in
+            guard let self else { return }
+            guard let trackedEvent else { return }
+
+            switch trackedEvent.type {
+            case .leftMouseDragged:
+                let location = self.convert(trackedEvent.locationInWindow, from: nil)
+                let delta = CGPoint(x: location.x - previousLocation.x, y: location.y - previousLocation.y)
+                previousLocation = location
+                self.coordinator?.pan(by: delta)
+            case .leftMouseUp:
+                stop.pointee = true
+            default:
+                break
+            }
         }
     }
 
@@ -487,4 +568,8 @@ extension Comparable {
     func clamped(to range: ClosedRange<Self>) -> Self {
         min(max(self, range.lowerBound), range.upperBound)
     }
+}
+
+extension Notification.Name {
+    static let imageViewportChanged = Notification.Name("imageViewportChanged")
 }
