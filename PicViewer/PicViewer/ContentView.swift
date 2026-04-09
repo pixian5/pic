@@ -9,6 +9,7 @@ struct ContentView: View {
     @EnvironmentObject var imageManager: ImageManager
     @State private var showOverlay = true
     @State private var hideTask: Task<Void, Never>? = nil
+    @State private var eventMonitors: [Any] = []
 
     var body: some View {
         ZStack {
@@ -37,16 +38,18 @@ struct ContentView: View {
         // Receive global notifications (from menus / keyboard)
         .onReceive(NotificationCenter.default.publisher(for: .previousImage)) { _ in navigatePrevious() }
         .onReceive(NotificationCenter.default.publisher(for: .nextImage))     { _ in navigateNext()     }
-        // Auto-hide overlay after inactivity
-        .onContinuousHover { _ in bumpOverlayTimer() }
         .onAppear  {
             restoreWindowFrame()
             updateWindowTitle()
+            installActivityMonitors()
             if imageManager.hasImages {
                 showOverlay = false
             }
         }
-        .onDisappear { saveWindowFrame() }
+        .onDisappear {
+            removeActivityMonitors()
+            saveWindowFrame()
+        }
         .onChange(of: imageManager.currentURL?.path) { _, _ in
             updateWindowTitle()
         }
@@ -106,6 +109,34 @@ struct ContentView: View {
                 withAnimation(.easeInOut(duration: 0.4)) { showOverlay = false }
             }
         }
+    }
+
+    private func installActivityMonitors() {
+        removeActivityMonitors()
+        NSApp.windows.first?.acceptsMouseMovedEvents = true
+
+        let mask: NSEvent.EventTypeMask = [
+            .mouseMoved,
+            .leftMouseDown,
+            .rightMouseDown,
+            .otherMouseDown,
+            .scrollWheel,
+            .keyDown
+        ]
+
+        let localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { event in
+            bumpOverlayTimer()
+            return event
+        }
+
+        eventMonitors = [localMonitor].compactMap { $0 }
+    }
+
+    private func removeActivityMonitors() {
+        hideTask?.cancel()
+        hideTask = nil
+        eventMonitors.forEach { NSEvent.removeMonitor($0) }
+        eventMonitors.removeAll()
     }
 
     // MARK: Window frame persistence
@@ -176,12 +207,18 @@ struct OverlayUI: View {
     var onNext:             () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            Spacer()
+        ZStack {
+            VStack(spacing: 0) {
+                topBar
+                Spacer()
+            }
+
             navRow
-            Spacer()
-            bottomBar
+
+            VStack(spacing: 0) {
+                Spacer()
+                bottomBar
+            }
         }
     }
 
