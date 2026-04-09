@@ -22,7 +22,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── 2. Compute version number ─────────────────────────────────────────────
+      # ── 2. Setup Node.js 24 ───────────────────────────────────────────────────
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # ── 3. Compute version number ─────────────────────────────────────────────
       - name: Compute version
         id: version
         run: |
@@ -32,11 +38,11 @@ jobs:
           echo "TAG=v${COUNT}"    >> "$GITHUB_OUTPUT"
           echo "Building version ${COUNT}"
 
-      # ── 3. Select Xcode ───────────────────────────────────────────────────────
+      # ── 4. Select Xcode ───────────────────────────────────────────────────────
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
-      # ── 4. Build (no code signing) ────────────────────────────────────────────
+      # ── 5. Build (no code signing) ────────────────────────────────────────────
       - name: Build PicViewer
         working-directory: PicViewer
         run: |
@@ -68,7 +74,7 @@ jobs:
               build
           fi
 
-      # ── 5. Locate the built .app ──────────────────────────────────────────────
+      # ── 6. Locate the built .app ──────────────────────────────────────────────
       - name: Locate .app
         id: locate
         working-directory: PicViewer
@@ -82,7 +88,7 @@ jobs:
           echo "APP_PATH=${APP}" >> "$GITHUB_OUTPUT"
           echo "Found app at: ${APP}"
 
-      # ── 6. Ad-hoc sign app for better launch compatibility ───────────────────
+      # ── 7. Ad-hoc sign app for better launch compatibility ───────────────────
       - name: Sign and verify app
         working-directory: PicViewer
         run: |
@@ -91,7 +97,7 @@ jobs:
           codesign --force --sign - "$APP"
           codesign --verify --strict --verbose=2 "$APP"
 
-      # ── 7. Create DMG ─────────────────────────────────────────────────────────
+      # ── 8. Create DMG ─────────────────────────────────────────────────────────
       - name: Create DMG
         working-directory: PicViewer
         run: |
@@ -114,7 +120,7 @@ jobs:
           echo "DMG created:"
           ls -lh ./PicViewer-${{ steps.version.outputs.VERSION }}.dmg
 
-      # ── 8. Create zip (as an alternative artifact) ────────────────────────────
+      # ── 9. Create zip (as an alternative artifact) ────────────────────────────
       - name: Create ZIP
         working-directory: PicViewer
         run: |
@@ -124,7 +130,7 @@ jobs:
           echo "ZIP created:"
           ls -lh ./PicViewer-${{ steps.version.outputs.VERSION }}.zip
 
-      # ── 9. Upload artifacts ───────────────────────────────────────────────────
+      # ── 10. Upload artifacts ──────────────────────────────────────────────────
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -133,7 +139,7 @@ jobs:
             PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.dmg
             PicViewer/PicViewer-${{ steps.version.outputs.VERSION }}.zip
 
-      # ── 10. Create GitHub Release ─────────────────────────────────────────────
+      # ── 11. Create GitHub Release ─────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
