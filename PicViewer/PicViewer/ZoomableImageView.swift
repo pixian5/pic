@@ -537,7 +537,7 @@ final class PicImageView: NSView {
             return
         }
 
-        var previousLocation = convert(event.locationInWindow, from: nil)
+        var previousLocation = event.locationInWindow
 
         window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { [weak self] trackedEvent, stop in
             guard let self else { return }
@@ -545,7 +545,7 @@ final class PicImageView: NSView {
 
             switch trackedEvent.type {
             case .leftMouseDragged:
-                let location = self.convert(trackedEvent.locationInWindow, from: nil)
+                let location = trackedEvent.locationInWindow
                 let delta = CGPoint(x: location.x - previousLocation.x, y: location.y - previousLocation.y)
                 previousLocation = location
                 self.coordinator?.pan(by: delta)
