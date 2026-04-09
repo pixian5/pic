@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var showInfoPanel = false
     @State private var hideControlsTask: Task<Void, Never>? = nil
     @State private var activityMonitor: Any? = nil
+    @State private var keyMonitor: Any? = nil
 
     var body: some View {
         ZStack {
@@ -30,9 +31,11 @@ struct ContentView: View {
             restoreWindowFrame()
             updateWindowTitle()
             installActivityMonitor()
+            installKeyMonitor()
         }
         .onDisappear {
             removeActivityMonitor()
+            removeKeyMonitor()
             saveWindowFrame()
         }
         .onChange(of: imageManager.currentURL?.path) { _, _ in
@@ -57,6 +60,21 @@ struct ContentView: View {
                 onDoubleClick: { toggleFullscreen() }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contextMenu {
+                Button("复制") {
+                    imageManager.copyCurrentImageToPasteboard()
+                }
+
+                Button("打开文件夹") {
+                    imageManager.revealCurrentImageInFinder()
+                }
+
+                Divider()
+
+                Button("删除") {
+                    imageManager.deleteCurrentImage()
+                }
+            }
             // Use .id so SwiftUI rebuilds the NSScrollView when the image changes,
             // producing a smooth fade between images.
             .id(imageManager.currentIndex)
@@ -119,6 +137,55 @@ struct ContentView: View {
         if let activityMonitor {
             NSEvent.removeMonitor(activityMonitor)
             self.activityMonitor = nil
+        }
+    }
+
+    private func installKeyMonitor() {
+        removeKeyMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard imageManager.hasImages,
+                  let window = NSApp.keyWindow,
+                  event.window === window else {
+                return event
+            }
+
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+            switch (event.keyCode, modifiers) {
+            case (8, [.command]):
+                imageManager.copyCurrentImageToPasteboard()
+                return nil
+            case (51, []), (117, []):
+                imageManager.deleteCurrentImage()
+                return nil
+            case (34, []):
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    showInfoPanel.toggle()
+                }
+                bumpControlsVisibility()
+                return nil
+            case (44, []):
+                NotificationCenter.default.post(name: .zoomActual, object: nil)
+                bumpControlsVisibility()
+                return nil
+            case (27, []), (27, [.shift]):
+                NotificationCenter.default.post(name: .zoomOut, object: nil)
+                bumpControlsVisibility()
+                return nil
+            case (24, []), (24, [.shift]):
+                NotificationCenter.default.post(name: .zoomIn, object: nil)
+                bumpControlsVisibility()
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
         }
     }
 

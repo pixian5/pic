@@ -204,6 +204,50 @@ final class ImageManager: ObservableObject {
         }
     }
 
+    func copyCurrentImageToPasteboard() {
+        guard let currentImage else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([currentImage])
+    }
+
+    func revealCurrentImageInFinder() {
+        guard let currentURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([currentURL])
+    }
+
+    func deleteCurrentImage() {
+        guard let currentURL, let folderURL else { return }
+
+        let currentPath = currentURL.standardizedFileURL.path
+        do {
+            var resultingURL: NSURL?
+            try FileManager.default.trashItem(at: currentURL, resultingItemURL: &resultingURL)
+
+            let previousIndex = currentIndex
+            loadImages(from: folderURL)
+
+            guard hasImages else {
+                currentIndex = 0
+                currentImage = nil
+                isLoading = false
+                return
+            }
+
+            currentIndex = min(previousIndex, images.count - 1)
+            if images.indices.contains(currentIndex),
+               images[currentIndex].standardizedFileURL.path == currentPath {
+                currentIndex = min(currentIndex + 1, images.count - 1)
+            }
+            loadCurrentImage()
+        } catch {
+            presentAlert(
+                title: "无法删除图片",
+                message: error.localizedDescription
+            )
+        }
+    }
+
     // MARK: - Private helpers
 
     func loadCurrentImage() {
