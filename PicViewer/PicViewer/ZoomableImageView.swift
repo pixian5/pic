@@ -169,10 +169,10 @@ struct ZoomableImageView: NSViewRepresentable {
             guard imageSize.width > 0, imageSize.height > 0,
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
-            let scale = min(
-                max(viewportSize.width / imageSize.width, viewportSize.height / imageSize.height),
-                1.0
-            )
+            let scale = max(
+                viewportSize.width / imageSize.width,
+                viewportSize.height / imageSize.height
+            ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
             scrollView.magnification = scale
             layoutDocumentForCurrentState()
             centerDocument()
