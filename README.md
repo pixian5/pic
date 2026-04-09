@@ -81,6 +81,8 @@ If macOS shows `PicViewer.app` is "damaged or incomplete", run:
 xattr -dr com.apple.quarantine /Applications/PicViewer.app
 ```
 
+Only do this for apps downloaded from trusted sources that you have verified.
+
 ---
 
 ## Architecture Notes

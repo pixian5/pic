@@ -88,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           APP="${{ steps.locate.outputs.APP_PATH }}"
-          codesign --force --sign - --timestamp=none "$APP"
+          codesign --force --sign - "$APP"
           codesign --verify --strict --verbose=2 "$APP"
 
       # ── 7. Create DMG ─────────────────────────────────────────────────────────
