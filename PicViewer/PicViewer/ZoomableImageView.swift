@@ -102,7 +102,7 @@ struct ZoomableImageView: NSViewRepresentable {
         var currentImage: NSImage?
         var keyMonitor: Any?
         private var isUpdatingLayout = false
-        var displayMode: DisplayMode = .shortestEdgeFill
+        var displayMode: DisplayMode = .fitToWindow
         var pendingDisplayMode: DisplayMode?
         private var lastViewportSize: CGSize = .zero
 
@@ -120,14 +120,14 @@ struct ZoomableImageView: NSViewRepresentable {
             guard let imageView else { return }
             imageView.image = image
             imageView.frame.size = naturalSize(image)
-            displayMode = .shortestEdgeFill
-            pendingDisplayMode = .shortestEdgeFill
+            displayMode = .fitToWindow
+            pendingDisplayMode = .fitToWindow
             lastViewportSize = .zero
         }
 
         func applyInitialDisplayMode() {
-            displayMode = .shortestEdgeFill
-            pendingDisplayMode = .shortestEdgeFill
+            displayMode = .fitToWindow
+            pendingDisplayMode = .fitToWindow
             applyDisplayModeIfNeeded(force: true)
         }
 
@@ -180,19 +180,10 @@ struct ZoomableImageView: NSViewRepresentable {
             guard imageSize.width > 0, imageSize.height > 0,
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
-            let fitMaximumMagnification = max(scrollView.maxMagnification, 1.0)
-            let viewportShortestEdge = min(viewportSize.width, viewportSize.height)
-            let imageShortestEdge = min(imageSize.width, imageSize.height)
-            var scale = viewportShortestEdge / imageShortestEdge
-
-            let widthLimit = viewportSize.width / (imageSize.width * scale)
-            let heightLimit = viewportSize.height / (imageSize.height * scale)
-            let shrinkLimit = min(widthLimit, heightLimit)
-            if shrinkLimit < 1.0 {
-                scale *= shrinkLimit
-            }
-
-            scale = scale.clamped(to: scrollView.minMagnification...fitMaximumMagnification)
+            let scale = min(
+                viewportSize.width / imageSize.width,
+                viewportSize.height / imageSize.height
+            ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
             let centerPoint = NSPoint(x: imageSize.width / 2, y: imageSize.height / 2)
             displayMode = .fitToWindow
             pendingDisplayMode = nil
