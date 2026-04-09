@@ -24,19 +24,16 @@ struct ZoomableImageView: NSViewRepresentable {
 
         let documentView = PicDocumentView()
         let imageView = PicImageView()
-        imageView.imageScaling = .scaleNone
-        imageView.imageAlignment = .alignCenter
-        imageView.animates = true
         documentView.addSubview(imageView)
 
         scroll.documentView = documentView
         context.coordinator.documentView = documentView
         context.coordinator.imageView = imageView
 
-        scroll.hasHorizontalScroller = true
-        scroll.hasVerticalScroller = true
-        scroll.autohidesScrollers = true
-        scroll.allowsMagnification = true
+        scroll.hasHorizontalScroller = false
+        scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = false
+        scroll.allowsMagnification = false
         scroll.minMagnification = 0.02
         scroll.maxMagnification = 32.0
         scroll.backgroundColor = .black
@@ -105,6 +102,8 @@ struct ZoomableImageView: NSViewRepresentable {
         var displayMode: DisplayMode = .fitToWindow
         var pendingDisplayMode: DisplayMode?
         private var lastViewportSize: CGSize = .zero
+        private var imageNaturalSize: CGSize = .zero
+        var zoomScale: CGFloat = 1.0
 
         init(onPrevious: @escaping () -> Void,
              onNext: @escaping () -> Void,
@@ -118,8 +117,10 @@ struct ZoomableImageView: NSViewRepresentable {
         func setImage(_ image: NSImage) {
             currentImage = image
             guard let imageView else { return }
-            imageView.image = image
-            imageView.frame.size = naturalSize(image)
+            imageNaturalSize = naturalSize(image)
+            imageView.setImage(image)
+            zoomScale = 1.0
+            imageView.frame.size = imageNaturalSize
             displayMode = .fitToWindow
             pendingDisplayMode = .fitToWindow
             lastViewportSize = .zero
@@ -158,9 +159,12 @@ struct ZoomableImageView: NSViewRepresentable {
         }
 
         private func naturalSize(_ image: NSImage) -> CGSize {
-            let size = image.size
-            if size.width > 0, size.height > 0 {
-                return size
+            if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                let width = cgImage.width
+                let height = cgImage.height
+                if width > 0, height > 0 {
+                    return CGSize(width: width, height: height)
+                }
             }
 
             if let rep = image.representations.first {
@@ -170,43 +174,42 @@ struct ZoomableImageView: NSViewRepresentable {
                     return CGSize(width: width, height: height)
                 }
             }
+
+            let size = image.size
+            if size.width > 0, size.height > 0 {
+                return size
+            }
             return .zero
         }
 
         func fitToWindow() {
-            guard let scrollView, let imageView else { return }
+            guard let scrollView else { return }
             let viewportSize = scrollView.contentSize
-            let imageSize = imageView.frame.size
-            guard imageSize.width > 0, imageSize.height > 0,
+            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
-            let scale = min(
-                viewportSize.width / imageSize.width,
-                viewportSize.height / imageSize.height
+            zoomScale = min(
+                viewportSize.width / imageNaturalSize.width,
+                viewportSize.height / imageNaturalSize.height
             ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
-            let centerPoint = NSPoint(x: imageSize.width / 2, y: imageSize.height / 2)
             displayMode = .fitToWindow
             pendingDisplayMode = nil
-            scrollView.setMagnification(scale, centeredAt: centerPoint)
             layoutDocumentForCurrentState()
             centerDocument()
         }
 
         func showImageUsingShortestEdge() {
-            guard let scrollView, let imageView else { return }
+            guard let scrollView else { return }
             let viewportSize = scrollView.contentSize
-            let imageSize = imageView.frame.size
-            guard imageSize.width > 0, imageSize.height > 0,
+            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
-            let scale = max(
-                viewportSize.width / imageSize.width,
-                viewportSize.height / imageSize.height
+            zoomScale = max(
+                viewportSize.width / imageNaturalSize.width,
+                viewportSize.height / imageNaturalSize.height
             ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
-            let centerPoint = NSPoint(x: imageSize.width / 2, y: imageSize.height / 2)
             displayMode = .shortestEdgeFill
             pendingDisplayMode = nil
-            scrollView.setMagnification(scale, centeredAt: centerPoint)
             layoutDocumentForCurrentState()
             centerDocument()
         }
@@ -263,27 +266,29 @@ struct ZoomableImageView: NSViewRepresentable {
             isUpdatingLayout = true
             defer { isUpdatingLayout = false }
 
-            let imageSize = imageView.frame.size
-            guard imageSize.width > 0, imageSize.height > 0 else { return }
+            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0 else { return }
 
-            let magnification = max(scrollView.magnification, 0.0001)
-            let visibleRect = scrollView.documentVisibleRect
-            let minimumWidth = max(scrollView.contentSize.width / magnification, visibleRect.width)
-            let minimumHeight = max(scrollView.contentSize.height / magnification, visibleRect.height)
+            let visibleSize = scrollView.contentView.bounds.size
+            let displayedImageSize = NSSize(
+                width: imageNaturalSize.width * zoomScale,
+                height: imageNaturalSize.height * zoomScale
+            )
             let documentSize = NSSize(
-                width: max(imageSize.width, minimumWidth),
-                height: max(imageSize.height, minimumHeight)
+                width: max(displayedImageSize.width, visibleSize.width),
+                height: max(displayedImageSize.height, visibleSize.height)
             )
 
-            documentView.frame = NSRect(origin: .zero, size: documentSize).integral
+            documentView.frame = NSRect(origin: .zero, size: documentSize)
             imageView.frame = NSRect(
-                x: (documentSize.width - imageSize.width) / 2,
-                y: (documentSize.height - imageSize.height) / 2,
-                width: imageSize.width,
-                height: imageSize.height
-            ).integral
+                x: (documentSize.width - displayedImageSize.width) / 2,
+                y: (documentSize.height - displayedImageSize.height) / 2,
+                width: displayedImageSize.width,
+                height: displayedImageSize.height
+            )
 
             documentView.needsLayout = true
+            documentView.needsDisplay = true
+            imageView.needsDisplay = true
         }
 
         func centerDocument() {
@@ -292,11 +297,7 @@ struct ZoomableImageView: NSViewRepresentable {
                   let documentView = scrollView.documentView else { return }
 
             let documentSize = documentView.frame.size
-            let magnification = max(scrollView.magnification, 0.0001)
-            let visibleSize = NSSize(
-                width: scrollView.contentSize.width / magnification,
-                height: scrollView.contentSize.height / magnification
-            )
+            let visibleSize = scrollView.contentSize
             let origin = NSPoint(
                 x: max(0, (documentSize.width - visibleSize.width) / 2),
                 y: max(0, (documentSize.height - visibleSize.height) / 2)
@@ -311,7 +312,7 @@ struct ZoomableImageView: NSViewRepresentable {
             displayMode = .custom
             pendingDisplayMode = nil
             animate {
-                scrollView.magnification = min(scrollView.magnification * 1.25, scrollView.maxMagnification)
+                self.zoomScale = min(self.zoomScale * 1.25, scrollView.maxMagnification)
             }
             layoutDocumentForCurrentState()
         }
@@ -321,17 +322,17 @@ struct ZoomableImageView: NSViewRepresentable {
             displayMode = .custom
             pendingDisplayMode = nil
             animate {
-                scrollView.magnification = max(scrollView.magnification * 0.8, scrollView.minMagnification)
+                self.zoomScale = max(self.zoomScale * 0.8, scrollView.minMagnification)
             }
             layoutDocumentForCurrentState()
         }
 
         @objc func zoomActual() {
-            guard let scrollView else { return }
+            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0 else { return }
             displayMode = .actualSize
             pendingDisplayMode = nil
             animate {
-                scrollView.magnification = 1.0
+                self.zoomScale = 1.0
             }
             layoutDocumentForCurrentState()
             centerDocument()
@@ -385,11 +386,10 @@ final class PicScrollView: NSScrollView {
             let delta = event.scrollingDeltaY
             guard delta != 0 else { return }
             let factor = delta > 0 ? 1.12 : (1.0 / 1.12)
-            let point = contentView.convert(event.locationInWindow, from: nil)
-            let newMagnification = (magnification * factor).clamped(to: minMagnification...maxMagnification)
             coordinator?.markUserAdjustedZoom()
-            setMagnification(newMagnification, centeredAt: point)
+            coordinator?.zoomScale = ((coordinator?.zoomScale ?? 1.0) * factor).clamped(to: minMagnification...maxMagnification)
             coordinator?.layoutDocumentForCurrentState()
+            coordinator?.centerDocument()
         } else {
             super.scrollWheel(with: event)
             coordinator?.layoutDocumentForCurrentState()
@@ -399,8 +399,10 @@ final class PicScrollView: NSScrollView {
     override func magnify(with event: NSEvent) {
         focusForKeyboard()
         coordinator?.markUserAdjustedZoom()
-        super.magnify(with: event)
+        let factor = 1.0 + event.magnification
+        coordinator?.zoomScale = ((coordinator?.zoomScale ?? 1.0) * factor).clamped(to: minMagnification...maxMagnification)
         coordinator?.layoutDocumentForCurrentState()
+        coordinator?.centerDocument()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -434,12 +436,35 @@ final class PicDocumentView: NSView {
 
 // MARK: - PicImageView
 
-final class PicImageView: NSImageView {
+final class PicImageView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    private var cgImage: CGImage?
+
     private var coordinator: ZoomableImageView.Coordinator? {
         (enclosingScrollView as? PicScrollView)?.coordinator
+    }
+
+    func setImage(_ image: NSImage) {
+        cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        needsDisplay = true
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        guard let cgImage,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+
+        context.interpolationQuality = .high
+        context.saveGState()
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(cgImage, in: CGRect(origin: .zero, size: bounds.size))
+        context.restoreGState()
     }
 
     override func mouseDown(with event: NSEvent) {
