@@ -73,7 +73,7 @@ Every push to `main` / `master` triggers the **Build and Release** workflow (`.g
 3. Creates a GitHub Release tagged `v{commit-count}` (e.g. `v3`, `v4`, …).
 
 Download the latest release from the **Releases** tab and drag `PicViewer.app` to `/Applications`.  
-On first launch, right-click → **Open** once if Gatekeeper prompts.
+If Gatekeeper prompts on first launch, right-click `PicViewer.app`, choose **Open**, then confirm **Open** in the dialog.
 
 If macOS shows `PicViewer.app` is "damaged or incomplete", run:
 
@@ -81,7 +81,7 @@ If macOS shows `PicViewer.app` is "damaged or incomplete", run:
 xattr -dr com.apple.quarantine /Applications/PicViewer.app
 ```
 
-Only do this for apps downloaded from trusted sources that you have verified.
+Only do this for apps downloaded from the official GitHub Releases page of this repository and files you trust.
 
 ---
 
