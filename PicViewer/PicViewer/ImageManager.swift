@@ -10,6 +10,16 @@ import UniformTypeIdentifiers
 @MainActor
 final class ImageManager: ObservableObject {
 
+    struct ImageDetails {
+        let name: String
+        let path: String
+        let dimensionsText: String
+        let fileSizeText: String
+        let formatText: String
+        let modifiedText: String
+        let indexText: String
+    }
+
     // MARK: Published state
     @Published var images:        [URL]     = []
     @Published var currentIndex:  Int       = 0
@@ -30,6 +40,28 @@ final class ImageManager: ObservableObject {
     var currentURL:   URL?   {
         guard hasImages, currentIndex < images.count else { return nil }
         return images[currentIndex]
+    }
+    var currentImageDetails: ImageDetails? {
+        guard let url = currentURL else { return nil }
+
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .short
+
+        return ImageDetails(
+            name: url.lastPathComponent,
+            path: url.path,
+            dimensionsText: imageDimensionsText(for: currentImage),
+            fileSizeText: values?.fileSize.map { formatter.string(fromByteCount: Int64($0)) } ?? "Unknown",
+            formatText: url.pathExtension.uppercased(),
+            modifiedText: values?.contentModificationDate.map(dateFormatter.string(from:)) ?? "Unknown",
+            indexText: "\(displayIndex) / \(totalCount)"
+        )
     }
 
     // MARK: Init
@@ -260,5 +292,26 @@ final class ImageManager: ObservableObject {
 
         defaults.set(filteredHandlers + contentTypeHandlers + extensionHandlers, forKey: "LSHandlers")
         defaults.synchronize()
+    }
+
+    private func imageDimensionsText(for image: NSImage?) -> String {
+        guard let image else { return "Loading..." }
+
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return "\(cgImage.width) × \(cgImage.height)"
+        }
+
+        if let rep = image.representations.first,
+           rep.pixelsWide > 0,
+           rep.pixelsHigh > 0 {
+            return "\(rep.pixelsWide) × \(rep.pixelsHigh)"
+        }
+
+        let size = image.size
+        if size.width > 0, size.height > 0 {
+            return "\(Int(size.width)) × \(Int(size.height))"
+        }
+
+        return "Unknown"
     }
 }

@@ -7,6 +7,10 @@ import AppKit
 struct ContentView: View {
 
     @EnvironmentObject var imageManager: ImageManager
+    @State private var showControls = false
+    @State private var showInfoPanel = false
+    @State private var hideControlsTask: Task<Void, Never>? = nil
+    @State private var activityMonitor: Any? = nil
 
     var body: some View {
         ZStack {
@@ -14,21 +18,30 @@ struct ContentView: View {
 
             if imageManager.hasImages {
                 imageContent
+                floatingControlsOverlay
             } else {
                 WelcomeView(imageManager: imageManager)
             }
         }
+        .contentShape(Rectangle())
         .onReceive(NotificationCenter.default.publisher(for: .previousImage)) { _ in navigatePrevious() }
         .onReceive(NotificationCenter.default.publisher(for: .nextImage)) { _ in navigateNext() }
         .onAppear {
             restoreWindowFrame()
             updateWindowTitle()
+            installActivityMonitor()
         }
         .onDisappear {
+            removeActivityMonitor()
             saveWindowFrame()
         }
         .onChange(of: imageManager.currentURL?.path) { _, _ in
             updateWindowTitle()
+        }
+        .onChange(of: imageManager.currentIndex) { _, _ in
+            if imageManager.hasImages {
+                bumpControlsVisibility()
+            }
         }
     }
 
@@ -70,6 +83,136 @@ struct ContentView: View {
 
     private func toggleFullscreen() {
         NSApp.keyWindow?.toggleFullScreen(nil)
+    }
+
+    private func bumpControlsVisibility() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            showControls = true
+        }
+
+        hideControlsTask?.cancel()
+        hideControlsTask = Task {
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showControls = false
+                }
+            }
+        }
+    }
+
+    private func installActivityMonitor() {
+        removeActivityMonitor()
+        activityMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
+            if imageManager.hasImages {
+                bumpControlsVisibility()
+            }
+            return event
+        }
+        NSApp.windows.first?.acceptsMouseMovedEvents = true
+    }
+
+    private func removeActivityMonitor() {
+        hideControlsTask?.cancel()
+        hideControlsTask = nil
+        if let activityMonitor {
+            NSEvent.removeMonitor(activityMonitor)
+            self.activityMonitor = nil
+        }
+    }
+
+    @ViewBuilder
+    private var floatingControlsOverlay: some View {
+        ZStack(alignment: .topTrailing) {
+            if showInfoPanel, let details = imageManager.currentImageDetails {
+                HStack(spacing: 0) {
+                    infoPanel(details)
+                    Spacer()
+                }
+                .padding(.top, 12)
+                .padding(.leading, 12)
+            }
+
+            if showControls {
+                HStack(spacing: 10) {
+                    overlayButton(systemName: "minus.magnifyingglass", help: "缩小") {
+                        NotificationCenter.default.post(name: .zoomOut, object: nil)
+                        bumpControlsVisibility()
+                    }
+                    overlayButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "原图尺寸") {
+                        NotificationCenter.default.post(name: .zoomActual, object: nil)
+                        bumpControlsVisibility()
+                    }
+                    overlayButton(systemName: "plus.magnifyingglass", help: "放大") {
+                        NotificationCenter.default.post(name: .zoomIn, object: nil)
+                        bumpControlsVisibility()
+                    }
+                    overlayButton(systemName: showInfoPanel ? "info.circle.fill" : "info.circle", help: "图片信息") {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showInfoPanel.toggle()
+                        }
+                        bumpControlsVisibility()
+                    }
+                }
+                .padding(.top, 12)
+                .padding(.trailing, 12)
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .allowsHitTesting(true)
+    }
+
+    private func overlayButton(systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 34, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.6))
+                )
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    private func infoPanel(_ details: ImageManager.ImageDetails) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("图片信息")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+
+            infoRow("名称", details.name)
+            infoRow("序号", details.indexText)
+            infoRow("尺寸", details.dimensionsText)
+            infoRow("大小", details.fileSizeText)
+            infoRow("格式", details.formatText)
+            infoRow("修改时间", details.modifiedText)
+            infoRow("路径", details.path)
+        }
+        .frame(width: 320, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.black.opacity(0.72))
+        )
+    }
+
+    private func infoRow(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.65))
+            Text(value)
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
+                .textSelection(.enabled)
+                .lineLimit(title == "路径" ? 3 : 1)
+                .truncationMode(.middle)
+        }
     }
 
     // MARK: Window frame persistence
