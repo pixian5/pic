@@ -102,7 +102,7 @@ struct ZoomableImageView: NSViewRepresentable {
         var currentImage: NSImage?
         var keyMonitor: Any?
         private var isUpdatingLayout = false
-        var displayMode: DisplayMode = .fitToWindow
+        var displayMode: DisplayMode = .shortestEdgeFill
         var pendingDisplayMode: DisplayMode?
         private var lastViewportSize: CGSize = .zero
 
@@ -120,14 +120,14 @@ struct ZoomableImageView: NSViewRepresentable {
             guard let imageView else { return }
             imageView.image = image
             imageView.frame.size = naturalSize(image)
-            displayMode = .fitToWindow
-            pendingDisplayMode = .fitToWindow
+            displayMode = .shortestEdgeFill
+            pendingDisplayMode = .shortestEdgeFill
             lastViewportSize = .zero
         }
 
         func applyInitialDisplayMode() {
-            displayMode = .fitToWindow
-            pendingDisplayMode = .fitToWindow
+            displayMode = .shortestEdgeFill
+            pendingDisplayMode = .shortestEdgeFill
             applyDisplayModeIfNeeded(force: true)
         }
 
@@ -188,9 +188,10 @@ struct ZoomableImageView: NSViewRepresentable {
             }
 
             scale = scale.clamped(to: scrollView.minMagnification...fitMaximumMagnification)
+            let centerPoint = NSPoint(x: imageSize.width / 2, y: imageSize.height / 2)
             displayMode = .fitToWindow
             pendingDisplayMode = nil
-            scrollView.magnification = scale
+            scrollView.setMagnification(scale, centeredAt: centerPoint)
             layoutDocumentForCurrentState()
             centerDocument()
         }
