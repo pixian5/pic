@@ -335,46 +335,86 @@ struct ZoomableImageView: NSViewRepresentable {
             publishViewportSnapshot()
         }
 
+        private func currentViewportAnchor() -> CGPoint? {
+            guard let scrollView,
+                  let imageView else { return nil }
+
+            let visibleRect = scrollView.documentVisibleRect
+            let imageRect = imageView.frame
+            let focusRect = visibleRect.intersection(imageRect)
+            let referenceRect = (focusRect.isNull || focusRect.isEmpty) ? imageRect : focusRect
+
+            guard referenceRect.width > 0,
+                  referenceRect.height > 0,
+                  imageRect.width > 0,
+                  imageRect.height > 0 else { return nil }
+
+            return CGPoint(
+                x: (referenceRect.midX - imageRect.minX) / imageRect.width,
+                y: (referenceRect.midY - imageRect.minY) / imageRect.height
+            )
+        }
+
+        private func restoreViewport(anchor: CGPoint) {
+            guard let scrollView,
+                  let clipView = scrollView.contentView as NSClipView?,
+                  let documentView = scrollView.documentView,
+                  let imageView else { return }
+
+            let visibleSize = clipView.bounds.size
+            let imageRect = imageView.frame
+            let targetPoint = CGPoint(
+                x: imageRect.minX + (anchor.x * imageRect.width),
+                y: imageRect.minY + (anchor.y * imageRect.height)
+            )
+
+            let maxX = max(0, documentView.frame.width - visibleSize.width)
+            let maxY = max(0, documentView.frame.height - visibleSize.height)
+            let origin = CGPoint(
+                x: (targetPoint.x - visibleSize.width / 2).clamped(to: 0...maxX),
+                y: (targetPoint.y - visibleSize.height / 2).clamped(to: 0...maxY)
+            )
+
+            clipView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clipView)
+            publishViewportSnapshot()
+        }
+
+        func updateZoomScalePreservingViewport(_ newScale: CGFloat) {
+            let anchor = currentViewportAnchor()
+            zoomScale = newScale
+            layoutDocumentForCurrentState()
+
+            if let anchor {
+                restoreViewport(anchor: anchor)
+            } else {
+                centerDocument()
+            }
+        }
+
         @objc func zoomIn() {
             guard let scrollView else { return }
             displayMode = .custom
             pendingDisplayMode = nil
-            animate {
-                self.zoomScale = min(self.zoomScale * 1.25, scrollView.maxMagnification)
-            }
-            layoutDocumentForCurrentState()
+            updateZoomScalePreservingViewport(min(zoomScale * 1.25, scrollView.maxMagnification))
         }
 
         @objc func zoomOut() {
             guard let scrollView else { return }
             displayMode = .custom
             pendingDisplayMode = nil
-            animate {
-                self.zoomScale = max(self.zoomScale * 0.8, scrollView.minMagnification)
-            }
-            layoutDocumentForCurrentState()
+            updateZoomScalePreservingViewport(max(zoomScale * 0.8, scrollView.minMagnification))
         }
 
         @objc func zoomActual() {
             guard imageNaturalSize.width > 0, imageNaturalSize.height > 0 else { return }
             displayMode = .actualSize
             pendingDisplayMode = nil
-            animate {
-                self.zoomScale = 1.0
-            }
-            layoutDocumentForCurrentState()
-            centerDocument()
+            updateZoomScalePreservingViewport(1.0)
         }
 
         @objc func zoomFit() {
             fitToWindow()
-        }
-
-        private func animate(_ block: @escaping () -> Void) {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.18
-                block()
-            }
         }
 
         func pan(by delta: CGPoint) {
@@ -450,9 +490,10 @@ final class PicScrollView: NSScrollView {
             guard delta != 0 else { return }
             let factor = delta > 0 ? 1.12 : (1.0 / 1.12)
             coordinator?.markUserAdjustedZoom()
-            coordinator?.zoomScale = ((coordinator?.zoomScale ?? 1.0) * factor).clamped(to: minMagnification...maxMagnification)
-            coordinator?.layoutDocumentForCurrentState()
-            coordinator?.centerDocument()
+            if let coordinator {
+                let nextScale = (coordinator.zoomScale * factor).clamped(to: minMagnification...maxMagnification)
+                coordinator.updateZoomScalePreservingViewport(nextScale)
+            }
         } else {
             super.scrollWheel(with: event)
             coordinator?.layoutDocumentForCurrentState()
@@ -463,9 +504,10 @@ final class PicScrollView: NSScrollView {
         focusForKeyboard()
         coordinator?.markUserAdjustedZoom()
         let factor = 1.0 + event.magnification
-        coordinator?.zoomScale = ((coordinator?.zoomScale ?? 1.0) * factor).clamped(to: minMagnification...maxMagnification)
-        coordinator?.layoutDocumentForCurrentState()
-        coordinator?.centerDocument()
+        if let coordinator {
+            let nextScale = (coordinator.zoomScale * factor).clamped(to: minMagnification...maxMagnification)
+            coordinator.updateZoomScalePreservingViewport(nextScale)
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
