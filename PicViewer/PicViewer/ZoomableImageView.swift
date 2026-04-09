@@ -50,6 +50,7 @@ struct ZoomableImageView: NSViewRepresentable {
 
         context.coordinator.setImage(image)
         DispatchQueue.main.async {
+            context.coordinator.applyInitialDisplayMode()
             scroll.focusForKeyboard()
         }
 
@@ -64,8 +65,12 @@ struct ZoomableImageView: NSViewRepresentable {
 
         if coordinator.currentImage !== image {
             coordinator.setImage(image)
+            DispatchQueue.main.async {
+                coordinator.applyInitialDisplayMode()
+                scroll.focusForKeyboard()
+            }
         } else {
-            coordinator.layoutDocumentForCurrentState()
+            coordinator.handleViewportDidChange()
             DispatchQueue.main.async {
                 scroll.focusForKeyboard()
             }
@@ -363,6 +368,7 @@ final class PicScrollView: NSScrollView {
         super.viewDidMoveToWindow()
         coordinator?.installKeyMonitorIfNeeded()
         DispatchQueue.main.async { [weak self] in
+            self?.coordinator?.applyDisplayModeIfNeeded(force: true)
             self?.focusForKeyboard()
         }
     }
