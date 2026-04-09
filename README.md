@@ -68,12 +68,18 @@ PicViewer/
 
 Every push to `main` / `master` triggers the **Build and Release** workflow (`.github/workflows/build-and-release.yml`):
 
-1. Builds the app with `xcodebuild` (no code signing).
+1. Builds the app with `xcodebuild`, then applies ad-hoc signing for distribution compatibility.
 2. Packages it as a `.dmg` (drag-to-install) **and** a `.zip`.
 3. Creates a GitHub Release tagged `v{commit-count}` (e.g. `v3`, `v4`, …).
 
 Download the latest release from the **Releases** tab and drag `PicViewer.app` to `/Applications`.  
-On first launch, right-click → **Open** to bypass Gatekeeper (unsigned build).
+On first launch, right-click → **Open** once if Gatekeeper prompts.
+
+If macOS shows `PicViewer.app` is "damaged or incomplete", run:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/PicViewer.app
+```
 
 ---
 
