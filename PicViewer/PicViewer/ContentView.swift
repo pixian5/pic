@@ -23,15 +23,16 @@ struct ContentView: View {
             }
 
             // ── Overlay UI ──────────────────────────────────────────────────
-            if showOverlay || !imageManager.hasImages {
-                OverlayUI(
-                    imageManager:      imageManager,
-                    onToggleFullscreen: toggleFullscreen,
-                    onPrevious:        { navigatePrevious() },
-                    onNext:            { navigateNext() }
-                )
-                .transition(.opacity)
-            }
+            OverlayUI(
+                imageManager:      imageManager,
+                onToggleFullscreen: toggleFullscreen,
+                onPrevious:        { navigatePrevious() },
+                onNext:            { navigateNext() }
+            )
+            .ignoresSafeArea()
+            .opacity(showOverlay || !imageManager.hasImages ? 1 : 0)
+            .allowsHitTesting(showOverlay || !imageManager.hasImages)
+            .animation(.easeInOut(duration: 0.2), value: showOverlay)
         }
         // Receive global notifications (from menus / keyboard)
         .onReceive(NotificationCenter.default.publisher(for: .previousImage)) { _ in navigatePrevious() }

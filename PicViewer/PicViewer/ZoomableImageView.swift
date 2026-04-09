@@ -275,13 +275,13 @@ struct ZoomableImageView: NSViewRepresentable {
                 height: max(imageSize.height, minimumHeight)
             )
 
-            documentView.frame = NSRect(origin: .zero, size: documentSize)
+            documentView.frame = NSRect(origin: .zero, size: documentSize).integral
             imageView.frame = NSRect(
                 x: (documentSize.width - imageSize.width) / 2,
                 y: (documentSize.height - imageSize.height) / 2,
                 width: imageSize.width,
                 height: imageSize.height
-            )
+            ).integral
 
             documentView.needsLayout = true
         }
@@ -291,11 +291,15 @@ struct ZoomableImageView: NSViewRepresentable {
                   let clipView = scrollView.contentView as NSClipView?,
                   let documentView = scrollView.documentView else { return }
 
-            let visibleRect = scrollView.documentVisibleRect
             let documentSize = documentView.frame.size
+            let magnification = max(scrollView.magnification, 0.0001)
+            let visibleSize = NSSize(
+                width: scrollView.contentSize.width / magnification,
+                height: scrollView.contentSize.height / magnification
+            )
             let origin = NSPoint(
-                x: max(0, (documentSize.width - visibleRect.width) / 2),
-                y: max(0, (documentSize.height - visibleRect.height) / 2)
+                x: max(0, (documentSize.width - visibleSize.width) / 2),
+                y: max(0, (documentSize.height - visibleSize.height) / 2)
             )
 
             clipView.scroll(to: origin)
