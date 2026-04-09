@@ -53,6 +53,7 @@ struct ContentView: View {
                 onNext:        { navigateNext()     },
                 onDoubleClick: { toggleFullscreen() }
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Use .id so SwiftUI rebuilds the NSScrollView when the image changes,
             // producing a smooth fade between images.
             .id(imageManager.currentIndex)
