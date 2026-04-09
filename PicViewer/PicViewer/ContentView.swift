@@ -170,7 +170,7 @@ struct ContentView: View {
                 bumpControlsVisibility()
                 return nil
             case (44, []):
-                NotificationCenter.default.post(name: .zoomActual, object: nil)
+                NotificationCenter.default.post(name: .zoomToggleActualFit, object: nil)
                 bumpControlsVisibility()
                 return nil
             case (27, []), (27, [.shift]):

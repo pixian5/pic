@@ -69,6 +69,7 @@ struct ZoomableImageView: NSViewRepresentable {
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomOut), name: .zoomOut, object: nil)
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomActual), name: .zoomActual, object: nil)
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomFit), name: .zoomFit, object: nil)
+        nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomToggleActualFit), name: .zoomToggleActualFit, object: nil)
 
         context.coordinator.setImage(image)
         DispatchQueue.main.async {
@@ -415,6 +416,14 @@ struct ZoomableImageView: NSViewRepresentable {
 
         @objc func zoomFit() {
             fitToWindow()
+        }
+
+        @objc func zoomToggleActualFit() {
+            if displayMode == .actualSize || abs(zoomScale - 1.0) < 0.0001 {
+                fitToWindow()
+            } else {
+                zoomActual()
+            }
         }
 
         func pan(by delta: CGPoint) {

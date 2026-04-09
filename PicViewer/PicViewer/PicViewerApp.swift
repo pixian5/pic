@@ -102,6 +102,7 @@ extension Notification.Name {
     static let zoomOut        = Notification.Name("zoomOut")
     static let zoomActual     = Notification.Name("zoomActual")
     static let zoomFit        = Notification.Name("zoomFit")
+    static let zoomToggleActualFit = Notification.Name("zoomToggleActualFit")
     static let previousImage  = Notification.Name("previousImage")
     static let nextImage      = Notification.Name("nextImage")
 }
