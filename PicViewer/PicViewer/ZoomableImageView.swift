@@ -88,6 +88,7 @@ struct ZoomableImageView: NSViewRepresentable {
         weak var documentView: PicDocumentView?
         weak var imageView: PicImageView?
         var currentImage: NSImage?
+        var keyMonitor: Any?
         private var isUpdatingLayout = false
 
         init(onPrevious: @escaping () -> Void,
@@ -108,6 +109,32 @@ struct ZoomableImageView: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 self?.showImageUsingShortestEdge()
                 self?.scrollView?.focusForKeyboard()
+            }
+        }
+
+        func installKeyMonitorIfNeeded() {
+            guard keyMonitor == nil else { return }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self,
+                      let scrollView = self.scrollView,
+                      let window = scrollView.window,
+                      event.window === window else {
+                    return event
+                }
+
+                switch event.keyCode {
+                case 123, 126:
+                    self.onPrevious()
+                    return nil
+                case 124, 125:
+                    self.onNext()
+                    return nil
+                case 53:
+                    window.toggleFullScreen(nil)
+                    return nil
+                default:
+                    return event
+                }
             }
         }
 
@@ -236,6 +263,9 @@ struct ZoomableImageView: NSViewRepresentable {
         }
 
         deinit {
+            if let keyMonitor {
+                NSEvent.removeMonitor(keyMonitor)
+            }
             NotificationCenter.default.removeObserver(self)
         }
     }
@@ -251,6 +281,7 @@ final class PicScrollView: NSScrollView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        coordinator?.installKeyMonitorIfNeeded()
         DispatchQueue.main.async { [weak self] in
             self?.focusForKeyboard()
         }
