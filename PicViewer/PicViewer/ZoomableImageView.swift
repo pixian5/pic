@@ -183,8 +183,7 @@ struct ZoomableImageView: NSViewRepresentable {
                 scale *= min(widthLimit, heightLimit)
             }
 
-            scale = scale
-                .clamped(to: scrollView.minMagnification...fitMaximumMagnification)
+            scale = scale.clamped(to: scrollView.minMagnification...fitMaximumMagnification)
             displayMode = .fitToWindow
             pendingDisplayMode = nil
             scrollView.magnification = scale
