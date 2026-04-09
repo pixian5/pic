@@ -158,6 +158,11 @@ struct ZoomableImageView: NSViewRepresentable {
         }
 
         private func naturalSize(_ image: NSImage) -> CGSize {
+            let size = image.size
+            if size.width > 0, size.height > 0 {
+                return size
+            }
+
             if let rep = image.representations.first {
                 let width = rep.pixelsWide
                 let height = rep.pixelsHigh
@@ -165,7 +170,7 @@ struct ZoomableImageView: NSViewRepresentable {
                     return CGSize(width: width, height: height)
                 }
             }
-            return image.size
+            return .zero
         }
 
         func fitToWindow() {
