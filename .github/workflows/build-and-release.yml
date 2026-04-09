@@ -5,13 +5,15 @@ on:
     branches:
       - main
       - master
-      - 'copilot/**'
+      - 'copilot/**'   # also build on feature branches so CI can be verified
   workflow_dispatch:
 
 jobs:
   build:
     name: Build macOS App & Create Release
     runs-on: macos-15
+    permissions:
+      contents: write   # needed to create releases and upload assets
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
