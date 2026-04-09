@@ -80,6 +80,13 @@ struct ZoomableImageView: NSViewRepresentable {
 
     final class Coordinator: NSObject {
 
+        enum DisplayMode {
+            case shortestEdgeFill
+            case fitToWindow
+            case actualSize
+            case custom
+        }
+
         var onPrevious: () -> Void
         var onNext: () -> Void
         var onDoubleClick: () -> Void
@@ -90,6 +97,9 @@ struct ZoomableImageView: NSViewRepresentable {
         var currentImage: NSImage?
         var keyMonitor: Any?
         private var isUpdatingLayout = false
+        var displayMode: DisplayMode = .shortestEdgeFill
+        var pendingDisplayMode: DisplayMode?
+        private var lastViewportSize: CGSize = .zero
 
         init(onPrevious: @escaping () -> Void,
              onNext: @escaping () -> Void,
@@ -105,11 +115,15 @@ struct ZoomableImageView: NSViewRepresentable {
             guard let imageView else { return }
             imageView.image = image
             imageView.frame.size = naturalSize(image)
+            displayMode = .shortestEdgeFill
+            pendingDisplayMode = .shortestEdgeFill
+            lastViewportSize = .zero
+        }
 
-            DispatchQueue.main.async { [weak self] in
-                self?.showImageUsingShortestEdge()
-                self?.scrollView?.focusForKeyboard()
-            }
+        func applyInitialDisplayMode() {
+            displayMode = .shortestEdgeFill
+            pendingDisplayMode = .shortestEdgeFill
+            applyDisplayModeIfNeeded(force: true)
         }
 
         func installKeyMonitorIfNeeded() {
@@ -157,6 +171,8 @@ struct ZoomableImageView: NSViewRepresentable {
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
             let scale = min(viewportSize.width / imageSize.width, viewportSize.height / imageSize.height, 1.0)
+            displayMode = .fitToWindow
+            pendingDisplayMode = nil
             scrollView.magnification = scale
             layoutDocumentForCurrentState()
             centerDocument()
@@ -173,9 +189,55 @@ struct ZoomableImageView: NSViewRepresentable {
                 viewportSize.width / imageSize.width,
                 viewportSize.height / imageSize.height
             ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
-            scrollView.magnification = scale
+            let centerPoint = NSPoint(x: imageSize.width / 2, y: imageSize.height / 2)
+            displayMode = .shortestEdgeFill
+            pendingDisplayMode = nil
+            scrollView.setMagnification(scale, centeredAt: centerPoint)
             layoutDocumentForCurrentState()
             centerDocument()
+        }
+
+        func applyDisplayModeIfNeeded(force: Bool = false) {
+            let modeToApply = pendingDisplayMode ?? (force ? displayMode : nil)
+            guard let mode = modeToApply else { return }
+            guard let scrollView else { return }
+            let viewportSize = scrollView.contentSize
+            guard viewportSize.width > 0, viewportSize.height > 0 else { return }
+
+            pendingDisplayMode = nil
+
+            switch mode {
+            case .shortestEdgeFill:
+                showImageUsingShortestEdge()
+            case .fitToWindow:
+                fitToWindow()
+            case .actualSize:
+                zoomActual()
+            case .custom:
+                break
+            }
+        }
+
+        func handleViewportDidChange() {
+            let viewportSize = scrollView?.contentSize ?? .zero
+            let viewportChanged = viewportSize != lastViewportSize
+            lastViewportSize = viewportSize
+
+            switch displayMode {
+            case .shortestEdgeFill, .fitToWindow:
+                if pendingDisplayMode != nil || viewportChanged {
+                    applyDisplayModeIfNeeded(force: true)
+                } else {
+                    layoutDocumentForCurrentState()
+                }
+            case .actualSize, .custom:
+                layoutDocumentForCurrentState()
+            }
+        }
+
+        func markUserAdjustedZoom() {
+            pendingDisplayMode = nil
+            displayMode = .custom
         }
 
         func layoutDocumentForCurrentState() {
@@ -228,6 +290,8 @@ struct ZoomableImageView: NSViewRepresentable {
 
         @objc func zoomIn() {
             guard let scrollView else { return }
+            displayMode = .custom
+            pendingDisplayMode = nil
             animate {
                 scrollView.magnification = min(scrollView.magnification * 1.25, scrollView.maxMagnification)
             }
@@ -236,6 +300,8 @@ struct ZoomableImageView: NSViewRepresentable {
 
         @objc func zoomOut() {
             guard let scrollView else { return }
+            displayMode = .custom
+            pendingDisplayMode = nil
             animate {
                 scrollView.magnification = max(scrollView.magnification * 0.8, scrollView.minMagnification)
             }
@@ -244,6 +310,8 @@ struct ZoomableImageView: NSViewRepresentable {
 
         @objc func zoomActual() {
             guard let scrollView else { return }
+            displayMode = .actualSize
+            pendingDisplayMode = nil
             animate {
                 scrollView.magnification = 1.0
             }
@@ -289,7 +357,7 @@ final class PicScrollView: NSScrollView {
 
     override func layout() {
         super.layout()
-        coordinator?.layoutDocumentForCurrentState()
+        coordinator?.handleViewportDidChange()
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -300,6 +368,7 @@ final class PicScrollView: NSScrollView {
             let factor = delta > 0 ? 1.12 : (1.0 / 1.12)
             let point = contentView.convert(event.locationInWindow, from: nil)
             let newMagnification = (magnification * factor).clamped(to: minMagnification...maxMagnification)
+            coordinator?.markUserAdjustedZoom()
             setMagnification(newMagnification, centeredAt: point)
             coordinator?.layoutDocumentForCurrentState()
         } else {
@@ -310,6 +379,7 @@ final class PicScrollView: NSScrollView {
 
     override func magnify(with event: NSEvent) {
         focusForKeyboard()
+        coordinator?.markUserAdjustedZoom()
         super.magnify(with: event)
         coordinator?.layoutDocumentForCurrentState()
     }
