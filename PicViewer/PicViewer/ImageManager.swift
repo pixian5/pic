@@ -22,18 +22,6 @@ final class ImageManager: ObservableObject {
         "jpg", "jpeg", "png", "webp", "gif",
         "bmp", "tiff", "tif", "heic", "heif"
     ]
-    static let supportedTypeIdentifiers: [String] = [
-        "public.jpeg",
-        "public.png",
-        "com.compuserve.gif",
-        "public.tiff",
-        "public.bmp",
-        "public.heic",
-        "public.heif",
-        "public.webp",
-        "org.webmproject.webp",
-    ]
-
     // MARK: Computed helpers
     var hasImages:    Bool   { !images.isEmpty }
     var totalCount:   Int    { images.count }
@@ -144,18 +132,30 @@ final class ImageManager: ObservableObject {
             return
         }
 
-        let failures = Self.supportedTypeIdentifiers.filter { identifier in
-            LSSetDefaultRoleHandlerForContentType(
+        let registeredURL = registeredApplicationURL()
+        LSRegisterURL(registeredURL as CFURL, true)
+
+        let contentTypes = Set(Self.supportedExtensions.compactMap(Self.preferredContentTypeIdentifier(forExtension:)))
+
+        let failures = contentTypes.filter { identifier in
+            let viewerStatus = LSSetDefaultRoleHandlerForContentType(
+                identifier as CFString,
+                .viewer,
+                bundleIdentifier as CFString
+            )
+            let allStatus = LSSetDefaultRoleHandlerForContentType(
                 identifier as CFString,
                 .all,
                 bundleIdentifier as CFString
-            ) != noErr
+            )
+            return viewerStatus != noErr || allStatus != noErr
         }
+        .sorted()
 
         if failures.isEmpty {
             presentAlert(
                 title: "PicViewer is now the default viewer",
-                message: "macOS has been asked to open supported image formats with PicViewer by default."
+                message: "macOS has been asked to open supported image formats with PicViewer by default.\n\nRegistered app: \(registeredURL.path)"
             )
         } else {
             let list = failures.joined(separator: ", ")
@@ -198,5 +198,18 @@ final class ImageManager: ObservableObject {
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func registeredApplicationURL() -> URL {
+        let applicationsURL = URL(fileURLWithPath: "/Applications/PicViewer.app", isDirectory: true)
+        if FileManager.default.fileExists(atPath: applicationsURL.path) {
+            return applicationsURL
+        }
+        return Bundle.main.bundleURL
+    }
+
+    private static func preferredContentTypeIdentifier(forExtension pathExtension: String) -> String? {
+        UTType(filenameExtension: pathExtension)?.identifier
+        ?? UTType(tag: pathExtension, tagClass: .filenameExtension, conformingTo: nil)?.identifier
     }
 }

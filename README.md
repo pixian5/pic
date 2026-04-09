@@ -69,6 +69,8 @@ PicViewer/
 
 Use `Association` → `Set PicViewer as Default Viewer` in the menu bar, or click the same button on the welcome screen / top toolbar.
 
+For the most reliable association result, run the installed app from `/Applications/PicViewer.app` rather than a temporary build folder copy.
+
 PicViewer will ask macOS to become the default viewer for:
 
 - `jpg` / `jpeg`
