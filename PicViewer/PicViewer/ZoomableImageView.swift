@@ -175,12 +175,11 @@ struct ZoomableImageView: NSViewRepresentable {
             let imageShortestEdge = min(imageSize.width, imageSize.height)
             var scale = viewportShortestEdge / imageShortestEdge
 
-            let scaledWidth = imageSize.width * scale
-            let scaledHeight = imageSize.height * scale
-            if scaledWidth > viewportSize.width || scaledHeight > viewportSize.height {
-                let widthLimit = viewportSize.width / scaledWidth
-                let heightLimit = viewportSize.height / scaledHeight
-                scale *= min(widthLimit, heightLimit)
+            let widthLimit = viewportSize.width / (imageSize.width * scale)
+            let heightLimit = viewportSize.height / (imageSize.height * scale)
+            let shrinkLimit = min(widthLimit, heightLimit)
+            if shrinkLimit < 1.0 {
+                scale *= shrinkLimit
             }
 
             scale = scale.clamped(to: scrollView.minMagnification...fitMaximumMagnification)
