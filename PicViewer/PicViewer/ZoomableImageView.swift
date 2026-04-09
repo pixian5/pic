@@ -106,7 +106,7 @@ struct ZoomableImageView: NSViewRepresentable {
             imageView.frame.size = naturalSize(image)
 
             DispatchQueue.main.async { [weak self] in
-                self?.fitToWindow()
+                self?.showImageUsingShortestEdge()
                 self?.scrollView?.focusForKeyboard()
             }
         }
@@ -130,6 +130,22 @@ struct ZoomableImageView: NSViewRepresentable {
                   viewportSize.width > 0, viewportSize.height > 0 else { return }
 
             let scale = min(viewportSize.width / imageSize.width, viewportSize.height / imageSize.height, 1.0)
+            scrollView.magnification = scale
+            layoutDocumentForCurrentState()
+            centerDocument()
+        }
+
+        func showImageUsingShortestEdge() {
+            guard let scrollView, let imageView else { return }
+            let viewportSize = scrollView.contentSize
+            let imageSize = imageView.frame.size
+            guard imageSize.width > 0, imageSize.height > 0,
+                  viewportSize.width > 0, viewportSize.height > 0 else { return }
+
+            let scale = min(
+                max(viewportSize.width / imageSize.width, viewportSize.height / imageSize.height),
+                1.0
+            )
             scrollView.magnification = scale
             layoutDocumentForCurrentState()
             centerDocument()

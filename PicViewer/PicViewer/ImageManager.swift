@@ -22,6 +22,7 @@ final class ImageManager: ObservableObject {
         "jpg", "jpeg", "png", "webp", "gif",
         "bmp", "tiff", "tif", "heic", "heif"
     ]
+    static let launchServicesDomain = "com.apple.LaunchServices/com.apple.launchservices.secure"
     // MARK: Computed helpers
     var hasImages:    Bool   { !images.isEmpty }
     var totalCount:   Int    { images.count }
@@ -136,6 +137,11 @@ final class ImageManager: ObservableObject {
         LSRegisterURL(registeredURL as CFURL, true)
 
         let contentTypes = Set(Self.supportedExtensions.compactMap(Self.preferredContentTypeIdentifier(forExtension:)))
+        writeLaunchServicesOverrides(
+            bundleIdentifier: bundleIdentifier,
+            contentTypes: Array(contentTypes),
+            extensions: Array(Self.supportedExtensions)
+        )
 
         let failures = contentTypes.filter { identifier in
             let viewerStatus = LSSetDefaultRoleHandlerForContentType(
@@ -211,5 +217,48 @@ final class ImageManager: ObservableObject {
     private static func preferredContentTypeIdentifier(forExtension pathExtension: String) -> String? {
         UTType(filenameExtension: pathExtension)?.identifier
         ?? UTType(tag: pathExtension, tagClass: .filenameExtension, conformingTo: nil)?.identifier
+    }
+
+    private func writeLaunchServicesOverrides(bundleIdentifier: String, contentTypes: [String], extensions: [String]) {
+        guard let defaults = UserDefaults(suiteName: Self.launchServicesDomain) else { return }
+
+        let existingHandlers = (defaults.array(forKey: "LSHandlers") as? [[String: Any]]) ?? []
+        let supportedContentTypes = Set(contentTypes)
+        let supportedExtensions = Set(extensions.map { $0.lowercased() })
+
+        let filteredHandlers = existingHandlers.filter { entry in
+            if let type = entry["LSHandlerContentType"] as? String, supportedContentTypes.contains(type) {
+                return false
+            }
+
+            if let tagClass = entry["LSHandlerContentTagClass"] as? String,
+               tagClass == "public.filename-extension",
+               let tag = entry["LSHandlerContentTag"] as? String,
+               supportedExtensions.contains(tag.lowercased()) {
+                return false
+            }
+
+            return true
+        }
+
+        let contentTypeHandlers: [[String: Any]] = contentTypes.sorted().map { identifier in
+            [
+                "LSHandlerContentType": identifier,
+                "LSHandlerRoleAll": bundleIdentifier,
+                "LSHandlerRoleViewer": bundleIdentifier,
+            ]
+        }
+
+        let extensionHandlers: [[String: Any]] = extensions.sorted().map { pathExtension in
+            [
+                "LSHandlerContentTag": pathExtension,
+                "LSHandlerContentTagClass": "public.filename-extension",
+                "LSHandlerRoleAll": bundleIdentifier,
+                "LSHandlerRoleViewer": bundleIdentifier,
+            ]
+        }
+
+        defaults.set(filteredHandlers + contentTypeHandlers + extensionHandlers, forKey: "LSHandlers")
+        defaults.synchronize()
     }
 }
