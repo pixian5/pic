@@ -1,6 +1,8 @@
 import SwiftUI
 import AppKit
 
+private let titleCountAccessoryIdentifier = NSUserInterfaceItemIdentifier("PicViewerTitleCountAccessory")
+
 // MARK: - ContentView
 /// Root view: dark canvas → zoomable image.
 
@@ -50,6 +52,10 @@ struct ContentView: View {
             if imageManager.hasImages {
                 bumpControlsVisibility()
             }
+            updateWindowTitle()
+        }
+        .onChange(of: imageManager.totalCount) { _, _ in
+            updateWindowTitle()
         }
     }
 
@@ -360,6 +366,45 @@ struct ContentView: View {
     private func updateWindowTitle() {
         guard let window = NSApp.windows.first else { return }
         window.title = imageManager.currentURL?.lastPathComponent ?? "PicViewer"
+        updateTitlebarCountAccessory(for: window)
+    }
+
+    private func updateTitlebarCountAccessory(for window: NSWindow) {
+        let countText = imageManager.hasImages ? "\(imageManager.displayIndex)/\(imageManager.totalCount)" : nil
+
+        if let accessoryIndex = window.titlebarAccessoryViewControllers.firstIndex(where: { $0.identifier == titleCountAccessoryIdentifier }) {
+            let accessory = window.titlebarAccessoryViewControllers[accessoryIndex]
+            if let label = accessory.view.subviews.first as? NSTextField {
+                label.stringValue = countText ?? ""
+                label.sizeToFit()
+                accessory.view.frame.size = label.fittingSize
+            }
+
+            if countText == nil {
+                window.removeTitlebarAccessoryViewController(at: accessoryIndex)
+            }
+            return
+        }
+
+        guard let countText else { return }
+
+        let label = NSTextField(labelWithString: countText)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.alignment = .right
+        label.lineBreakMode = .byClipping
+        label.sizeToFit()
+
+        let container = NSView(frame: NSRect(origin: .zero, size: label.fittingSize))
+        label.frame = container.bounds
+        label.autoresizingMask = [.width, .height]
+        container.addSubview(label)
+
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.identifier = titleCountAccessoryIdentifier
+        accessory.layoutAttribute = .right
+        accessory.view = container
+        window.addTitlebarAccessoryViewController(accessory)
     }
 }
 
