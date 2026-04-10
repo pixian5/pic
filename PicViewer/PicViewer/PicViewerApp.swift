@@ -1,6 +1,35 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum DefaultImageDisplayMode: String, CaseIterable, Identifiable {
+    case actualSize = "actualSize"
+    case fillWindow = "fillWindow"
+    case actualSizeOrFit = "actualSizeOrFit"
+
+    static let userDefaultsKey = "defaultImageDisplayMode"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .actualSize:
+            return "原尺寸"
+        case .fillWindow:
+            return "铺满窗口"
+        case .actualSizeOrFit:
+            return "原尺寸（最大铺满窗口）"
+        }
+    }
+
+    static func current() -> DefaultImageDisplayMode {
+        guard let rawValue = UserDefaults.standard.string(forKey: userDefaultsKey),
+              let mode = DefaultImageDisplayMode(rawValue: rawValue) else {
+            return .fillWindow
+        }
+        return mode
+    }
+}
+
 // MARK: - App Entry Point
 
 @main
@@ -14,7 +43,18 @@ struct PicViewerApp: App {
                 .environmentObject(imageManager)
                 .frame(minWidth: 480, minHeight: 320)
         }
+
+        Settings {
+            SettingsView()
+        }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                SettingsLink {
+                    Text("设置…")
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
+
             // Replace default New with Open
             CommandGroup(replacing: .newItem) {
                 Button("Open Image…") {
@@ -80,6 +120,26 @@ struct PicViewerApp: App {
     }
 }
 
+struct SettingsView: View {
+    @AppStorage(DefaultImageDisplayMode.userDefaultsKey) private var defaultDisplayModeRawValue = DefaultImageDisplayMode.fillWindow.rawValue
+
+    var body: some View {
+        Form {
+            Picker("图片默认尺寸", selection: $defaultDisplayModeRawValue) {
+                ForEach(DefaultImageDisplayMode.allCases) { mode in
+                    Text(mode.title).tag(mode.rawValue)
+                }
+            }
+            .pickerStyle(.radioGroup)
+        }
+        .padding(20)
+        .frame(width: 420)
+        .onChange(of: defaultDisplayModeRawValue) { _, _ in
+            NotificationCenter.default.post(name: .defaultDisplayModeChanged, object: nil)
+        }
+    }
+}
+
 // MARK: - AppDelegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -103,6 +163,7 @@ extension Notification.Name {
     static let zoomActual     = Notification.Name("zoomActual")
     static let zoomFit        = Notification.Name("zoomFit")
     static let zoomToggleActualFit = Notification.Name("zoomToggleActualFit")
+    static let defaultDisplayModeChanged = Notification.Name("defaultDisplayModeChanged")
     static let previousImage  = Notification.Name("previousImage")
     static let nextImage      = Notification.Name("nextImage")
 }

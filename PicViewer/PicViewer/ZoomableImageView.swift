@@ -112,6 +112,7 @@ struct ZoomableImageView: NSViewRepresentable {
             case shortestEdgeFill
             case fitToWindow
             case actualSize
+            case actualSizeOrFit
             case custom
         }
 
@@ -138,6 +139,13 @@ struct ZoomableImageView: NSViewRepresentable {
             self.onPrevious = onPrevious
             self.onNext = onNext
             self.onDoubleClick = onDoubleClick
+            super.init()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleDefaultDisplayModeChanged),
+                name: .defaultDisplayModeChanged,
+                object: nil
+            )
         }
 
         func setImage(_ image: NSImage) {
@@ -147,16 +155,27 @@ struct ZoomableImageView: NSViewRepresentable {
             imageView.setImage(image)
             zoomScale = 1.0
             imageView.frame.size = imageNaturalSize
-            displayMode = .fitToWindow
-            pendingDisplayMode = .fitToWindow
+            displayMode = defaultDisplayMode()
+            pendingDisplayMode = displayMode
             lastViewportSize = .zero
             publishViewportSnapshot()
         }
 
         func applyInitialDisplayMode() {
-            displayMode = .fitToWindow
-            pendingDisplayMode = .fitToWindow
+            displayMode = defaultDisplayMode()
+            pendingDisplayMode = displayMode
             applyDisplayModeIfNeeded(force: true)
+        }
+
+        private func defaultDisplayMode() -> DisplayMode {
+            switch DefaultImageDisplayMode.current() {
+            case .actualSize:
+                return .actualSize
+            case .fillWindow:
+                return .shortestEdgeFill
+            case .actualSizeOrFit:
+                return .actualSizeOrFit
+            }
         }
 
         func installKeyMonitorIfNeeded() {
@@ -257,6 +276,8 @@ struct ZoomableImageView: NSViewRepresentable {
                 fitToWindow()
             case .actualSize:
                 zoomActual()
+            case .actualSizeOrFit:
+                zoomActualSizeOrFit()
             case .custom:
                 break
             }
@@ -268,7 +289,7 @@ struct ZoomableImageView: NSViewRepresentable {
             lastViewportSize = viewportSize
 
             switch displayMode {
-            case .shortestEdgeFill, .fitToWindow:
+            case .shortestEdgeFill, .fitToWindow, .actualSizeOrFit:
                 if pendingDisplayMode != nil || viewportChanged {
                     applyDisplayModeIfNeeded(force: true)
                 } else {
@@ -414,6 +435,24 @@ struct ZoomableImageView: NSViewRepresentable {
             updateZoomScalePreservingViewport(1.0)
         }
 
+        @objc func zoomActualSizeOrFit() {
+            guard let scrollView else { return }
+            let viewportSize = scrollView.contentSize
+            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
+                  viewportSize.width > 0, viewportSize.height > 0 else { return }
+
+            let fitScale = min(
+                viewportSize.width / imageNaturalSize.width,
+                viewportSize.height / imageNaturalSize.height
+            )
+
+            displayMode = .actualSizeOrFit
+            pendingDisplayMode = nil
+            zoomScale = min(1.0, fitScale).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
+            layoutDocumentForCurrentState()
+            centerDocument()
+        }
+
         @objc func zoomFit() {
             fitToWindow()
         }
@@ -459,6 +498,11 @@ struct ZoomableImageView: NSViewRepresentable {
             )
 
             NotificationCenter.default.post(name: .imageViewportChanged, object: snapshot)
+        }
+
+        @objc private func handleDefaultDisplayModeChanged() {
+            guard currentImage != nil else { return }
+            applyInitialDisplayMode()
         }
 
         deinit {
