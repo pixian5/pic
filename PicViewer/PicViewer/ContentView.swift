@@ -389,7 +389,7 @@ struct ContentView: View {
         guard let countText else { return }
 
         let label = NSTextField(labelWithString: countText)
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = .systemFont(ofSize: NSFont.systemFontSize)
         label.textColor = .secondaryLabelColor
         label.alignment = .right
         label.lineBreakMode = .byClipping
