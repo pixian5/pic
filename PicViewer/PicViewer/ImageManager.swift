@@ -27,7 +27,6 @@ final class ImageManager: ObservableObject {
     }
 
     // MARK: Published state
-    // MARK: Published state
     @Published var images:        [URL]     = []
     @Published var currentIndex:  Int       = 0
     @Published var currentImage:  NSImage?  = nil
@@ -35,6 +34,7 @@ final class ImageManager: ObservableObject {
     @Published var folderURL:     URL?      = nil
     @Published var folderAuthorized: Bool   = true
     @Published var hasChanges:    Bool      = false
+    @Published var hasHomeFolderAccess: Bool = true
 
     // MARK: Constants
     static let supportedExtensions: Set<String> = [
@@ -154,6 +154,7 @@ final class ImageManager: ObservableObject {
             name: .executeCrop,
             object: nil
         )
+        checkHomeFolderAccess()
     }
 
     @objc private func handleExecuteCrop(_ notification: Notification) {
@@ -356,6 +357,42 @@ final class ImageManager: ObservableObject {
                 }
             }
             loadCurrentImage()
+        }
+    }
+
+    func checkHomeFolderAccess() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        if tryResolveBookmark(for: home) {
+            hasHomeFolderAccess = true
+        } else {
+            let fm = FileManager.default
+            if (try? fm.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) != nil {
+                hasHomeFolderAccess = true
+            } else {
+                hasHomeFolderAccess = false
+            }
+        }
+    }
+
+    func requestHomeFolderAuthorization() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        
+        let panel = NSOpenPanel()
+        panel.directoryURL = home
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "请直接点击“授权访问”以授权 PicViewer 访问您的个人主文件夹"
+        panel.prompt = "授权访问"
+        
+        if panel.runModal() == .OK, let url = panel.url {
+            saveBookmark(for: url)
+            startAccessing(url)
+            hasHomeFolderAccess = true
+            
+            if let folder = folderURL {
+                loadImages(from: folder)
+            }
         }
     }
 

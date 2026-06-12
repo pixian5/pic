@@ -28,6 +28,11 @@ struct ContentView: View {
             } else {
                 WelcomeView(imageManager: imageManager)
             }
+
+            if !imageManager.hasHomeFolderAccess {
+                HomeFolderAuthorizationView(imageManager: imageManager)
+                    .transition(.opacity)
+            }
         }
         .contentShape(Rectangle())
         .onReceive(NotificationCenter.default.publisher(for: .previousImage)) { _ in navigatePrevious() }
@@ -616,5 +621,74 @@ struct WelcomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+// MARK: - HomeFolderAuthorizationView
+/// Guided screen for one-time home directory access in App Sandbox.
+struct HomeFolderAuthorizationView: View {
+    @ObservedObject var imageManager: ImageManager
+    
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.4)
+            Rectangle()
+                .fill(.ultraThinMaterial)
+            
+            VStack(spacing: 24) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 64))
+                    .foregroundStyle(.blue)
+                
+                Text("一次性授权主文件夹")
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
+                
+                Text("为了能够自由浏览桌面、下载、图片等所有文件夹下的图片而免去逐个授权的烦恼，我们需要您的一次性访问授权。")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .multilineTextAlignment(.center)
+                    .frame(width: 320)
+                
+                Button(action: {
+                    withAnimation {
+                        imageManager.requestHomeFolderAuthorization()
+                    }
+                }) {
+                    Text("授权访问个人主目录")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.blue)
+                        )
+                }
+                .buttonStyle(.plain)
+                
+                Button(action: {
+                    withAnimation {
+                        imageManager.hasHomeFolderAccess = true
+                    }
+                }) {
+                    Text("以后再说")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(40)
+            .background(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.black.opacity(0.65))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                      )
+            )
+            .frame(width: 440)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
