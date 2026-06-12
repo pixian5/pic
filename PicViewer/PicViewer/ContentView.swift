@@ -15,6 +15,8 @@ struct ContentView: View {
     @State private var activityMonitor: Any? = nil
     @State private var keyMonitor: Any? = nil
     @State private var viewportSnapshot: ImageViewportSnapshot? = nil
+    @State private var showEditBar = false
+    @State private var isCropMode = false
 
     var body: some View {
         ZStack {
@@ -163,6 +165,12 @@ struct ContentView: View {
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
             switch (event.keyCode, modifiers) {
+            case (1, [.command]): // Command + S
+                imageManager.saveChanges()
+                return nil
+            case (6, [.command]): // Command + Z
+                imageManager.discardChanges()
+                return nil
             case (8, [.command]):
                 imageManager.copyCurrentImageToPasteboard()
                 return nil
@@ -203,6 +211,7 @@ struct ContentView: View {
     @ViewBuilder
     private var floatingControlsOverlay: some View {
         ZStack {
+            // Left: Info Panel
             if showInfoPanel, let details = imageManager.currentImageDetails {
                 HStack(spacing: 0) {
                     infoPanel(details)
@@ -212,6 +221,7 @@ struct ContentView: View {
                 .padding(.leading, 12)
             }
 
+            // Right Bottom: Minimap
             if let snapshot = viewportSnapshot, snapshot.shouldShowMiniMap {
                 VStack {
                     Spacer()
@@ -224,28 +234,172 @@ struct ContentView: View {
                 .padding(.bottom, 16)
             }
 
-            if showControls {
+            // Top: Sandbox Authorization Banner
+            if !imageManager.folderAuthorized {
                 VStack {
+                    HStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .foregroundStyle(.yellow)
+                        Text("沙盒受限：无法浏览同目录的其他图片")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white)
+                        Button("授权文件夹") {
+                            imageManager.requestFolderAuthorization()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.black.opacity(0.8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                            )
+                    )
+                    .padding(.top, 16)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            // Bottom Center: Edit feedback and crop action bar
+            VStack {
+                Spacer()
+                if isCropMode {
+                    HStack(spacing: 20) {
+                        Button("取消") {
+                            NotificationCenter.default.post(name: .cancelCropMode, object: nil)
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                isCropMode = false
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+                        
+                        Text("裁剪模式 (拖动调整边框)")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                        
+                        Button("确定裁剪") {
+                            NotificationCenter.default.post(name: .applyCropMode, object: nil)
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                isCropMode = false
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .controlSize(.regular)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(Color.black.opacity(0.85))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if imageManager.hasChanges {
+                    HStack(spacing: 16) {
+                        Text("图片已修改")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.8))
+                        
+                        Button("放弃 (⌘Z)") {
+                            imageManager.discardChanges()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        
+                        Button("保存 (⌘S)") {
+                            imageManager.saveChanges()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.blue)
+                        .controlSize(.small)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.black.opacity(0.8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                            )
+                    )
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+
+            // Right Top: Action buttons
+            if showControls && !isCropMode {
+                VStack(alignment: .trailing) {
                     HStack {
                         Spacer()
-                        HStack(spacing: 10) {
-                            overlayButton(systemName: "minus.magnifyingglass", help: "缩小") {
-                                NotificationCenter.default.post(name: .zoomOut, object: nil)
-                                bumpControlsVisibility()
-                            }
-                            overlayButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "原图尺寸") {
-                                NotificationCenter.default.post(name: .zoomActual, object: nil)
-                                bumpControlsVisibility()
-                            }
-                            overlayButton(systemName: "plus.magnifyingglass", help: "放大") {
-                                NotificationCenter.default.post(name: .zoomIn, object: nil)
-                                bumpControlsVisibility()
-                            }
-                            overlayButton(systemName: showInfoPanel ? "info.circle.fill" : "info.circle", help: "图片信息") {
-                                withAnimation(.easeInOut(duration: 0.18)) {
-                                    showInfoPanel.toggle()
+                        VStack(alignment: .trailing, spacing: 8) {
+                            HStack(spacing: 10) {
+                                overlayButton(systemName: "minus.magnifyingglass", help: "缩小") {
+                                    NotificationCenter.default.post(name: .zoomOut, object: nil)
+                                    bumpControlsVisibility()
                                 }
-                                bumpControlsVisibility()
+                                overlayButton(systemName: "arrow.up.left.and.down.right.magnifyingglass", help: "原图尺寸") {
+                                    NotificationCenter.default.post(name: .zoomActual, object: nil)
+                                    bumpControlsVisibility()
+                                }
+                                overlayButton(systemName: "plus.magnifyingglass", help: "放大") {
+                                    NotificationCenter.default.post(name: .zoomIn, object: nil)
+                                    bumpControlsVisibility()
+                                }
+                                overlayButton(systemName: showEditBar ? "slider.horizontal.3.fill" : "slider.horizontal.3", help: "编辑图片") {
+                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                        showEditBar.toggle()
+                                    }
+                                    bumpControlsVisibility()
+                                }
+                                overlayButton(systemName: showInfoPanel ? "info.circle.fill" : "info.circle", help: "图片信息") {
+                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                        showInfoPanel.toggle()
+                                    }
+                                    bumpControlsVisibility()
+                                }
+                            }
+                            
+                            if showEditBar {
+                                HStack(spacing: 10) {
+                                    overlayButton(systemName: "rotate.left", help: "逆时针旋转") {
+                                        imageManager.rotateCurrentImage(clockwise: false)
+                                        bumpControlsVisibility()
+                                    }
+                                    overlayButton(systemName: "rotate.right", help: "顺时针旋转") {
+                                        imageManager.rotateCurrentImage(clockwise: true)
+                                        bumpControlsVisibility()
+                                    }
+                                    overlayButton(systemName: "arrow.left.and.right.righttriangle.lefttriangle", help: "水平翻转") {
+                                        imageManager.flipCurrentImage(horizontal: true)
+                                        bumpControlsVisibility()
+                                    }
+                                    overlayButton(systemName: "arrow.up.and.down.righttriangle.lefttriangle", help: "垂直翻转") {
+                                        imageManager.flipCurrentImage(horizontal: false)
+                                        bumpControlsVisibility()
+                                    }
+                                    overlayButton(systemName: "crop", help: "裁剪图片") {
+                                        withAnimation(.easeInOut(duration: 0.18)) {
+                                            isCropMode = true
+                                            showEditBar = false
+                                        }
+                                        NotificationCenter.default.post(name: .startCropMode, object: nil)
+                                    }
+                                }
+                                .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity), removal: .opacity))
                             }
                         }
                     }
@@ -276,20 +430,41 @@ struct ContentView: View {
     }
 
     private func infoPanel(_ details: ImageManager.ImageDetails) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("图片信息")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("图片信息")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
 
-            infoRow("名称", details.name)
-            infoRow("序号", details.indexText)
-            infoRow("尺寸", details.dimensionsText)
-            infoRow("大小", details.fileSizeText)
-            infoRow("格式", details.formatText)
-            infoRow("修改时间", details.modifiedText)
-            infoRow("路径", details.path)
+                infoRow("名称", details.name)
+                infoRow("序号", details.indexText)
+                infoRow("尺寸", details.dimensionsText)
+                infoRow("大小", details.fileSizeText)
+                infoRow("格式", details.formatText)
+                infoRow("修改时间", details.modifiedText)
+                
+                if let camera = details.cameraModel {
+                    infoRow("相机型号", camera)
+                }
+                if let aperture = details.aperture {
+                    infoRow("光圈", aperture)
+                }
+                if let focal = details.focalLength {
+                    infoRow("焦距", focal)
+                }
+                if let iso = details.iso {
+                    infoRow("ISO", iso)
+                }
+                if let gps = details.gpsCoords {
+                    infoRow("GPS 拍摄位置", gps)
+                }
+                
+                infoRow("路径", details.path)
+            }
+            .padding(.trailing, 4)
         }
         .frame(width: 320, alignment: .leading)
+        .frame(maxHeight: 400)
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)

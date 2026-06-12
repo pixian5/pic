@@ -146,6 +146,50 @@ struct ZoomableImageView: NSViewRepresentable {
                 name: .defaultDisplayModeChanged,
                 object: nil
             )
+            NotificationCenter.default.addObserver(self, selector: #selector(handleStartCropMode), name: .startCropMode, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleCancelCropMode), name: .cancelCropMode, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleApplyCropMode), name: .applyCropMode, object: nil)
+        }
+
+        var isCropMode: Bool {
+            imageView?.isCropMode ?? false
+        }
+
+        @objc private func handleStartCropMode() {
+            fitToWindow()
+            guard let imageView = imageView else { return }
+            imageView.isCropMode = true
+            let b = imageView.bounds
+            imageView.cropFrame = NSRect(
+                x: b.minX + b.width * 0.1,
+                y: b.minY + b.height * 0.1,
+                width: b.width * 0.8,
+                height: b.height * 0.8
+            )
+        }
+
+        @objc private func handleCancelCropMode() {
+            guard let imageView = imageView else { return }
+            imageView.isCropMode = false
+        }
+
+        @objc private func handleApplyCropMode() {
+            guard let imageView = imageView, imageView.isCropMode else { return }
+            imageView.isCropMode = false
+            
+            let cropFrame = imageView.cropFrame
+            let boundsSize = imageView.bounds.size
+            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+            
+            let scale = imageNaturalSize.width / boundsSize.width
+            let pixelRect = CGRect(
+                x: cropFrame.origin.x * scale,
+                y: cropFrame.origin.y * scale,
+                width: cropFrame.size.width * scale,
+                height: cropFrame.size.height * scale
+            )
+            
+            NotificationCenter.default.post(name: .executeCrop, object: pixelRect)
         }
 
         func setImage(_ image: NSImage) {
@@ -537,6 +581,7 @@ final class PicScrollView: NSScrollView {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        if coordinator?.isCropMode == true { return }
         focusForKeyboard()
         if event.phase == [] && event.momentumPhase == [] {
             let delta = event.scrollingDeltaY
@@ -554,6 +599,7 @@ final class PicScrollView: NSScrollView {
     }
 
     override func magnify(with event: NSEvent) {
+        if coordinator?.isCropMode == true { return }
         focusForKeyboard()
         coordinator?.markUserAdjustedZoom()
         let factor = 1.0 + event.magnification
@@ -599,6 +645,12 @@ final class PicImageView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     private var cgImage: CGImage?
+    var isCropMode: Bool = false {
+        didSet { needsDisplay = true }
+    }
+    var cropFrame: NSRect = .zero {
+        didSet { needsDisplay = true }
+    }
 
     private var coordinator: ZoomableImageView.Coordinator? {
         (enclosingScrollView as? PicScrollView)?.coordinator
@@ -623,10 +675,176 @@ final class PicImageView: NSView {
         context.scaleBy(x: 1, y: -1)
         context.draw(cgImage, in: CGRect(origin: .zero, size: bounds.size))
         context.restoreGState()
+
+        if isCropMode {
+            guard let context = NSGraphicsContext.current?.cgContext else { return }
+            context.saveGState()
+
+            // 1. Semitransparent dim overlay
+            context.setFillColor(NSColor.black.withAlphaComponent(0.55).cgColor)
+            context.fill(bounds)
+
+            // 2. Clear crop box
+            context.setBlendMode(.clear)
+            context.setFillColor(NSColor.clear.cgColor)
+            context.fill(cropFrame)
+            context.setBlendMode(.normal)
+
+            // 3. Draw border and 3x3 grid
+            context.setStrokeColor(NSColor.white.cgColor)
+            context.setLineWidth(2.0)
+            context.stroke(cropFrame)
+
+            // Grid lines
+            context.setStrokeColor(NSColor.white.withAlphaComponent(0.35).cgColor)
+            context.setLineWidth(1.0)
+            let thirdWidth = cropFrame.width / 3.0
+            context.strokeLineSegments(between: [
+                CGPoint(x: cropFrame.minX + thirdWidth, y: cropFrame.minY),
+                CGPoint(x: cropFrame.minX + thirdWidth, y: cropFrame.maxY)
+            ])
+            context.strokeLineSegments(between: [
+                CGPoint(x: cropFrame.minX + thirdWidth * 2, y: cropFrame.minY),
+                CGPoint(x: cropFrame.minX + thirdWidth * 2, y: cropFrame.maxY)
+            ])
+
+            let thirdHeight = cropFrame.height / 3.0
+            context.strokeLineSegments(between: [
+                CGPoint(x: cropFrame.minX, y: cropFrame.minY + thirdHeight),
+                CGPoint(x: cropFrame.maxX, y: cropFrame.minY + thirdHeight)
+            ])
+            context.strokeLineSegments(between: [
+                CGPoint(x: cropFrame.minX, y: cropFrame.minY + thirdHeight * 2),
+                CGPoint(x: cropFrame.maxX, y: cropFrame.minY + thirdHeight * 2)
+            ])
+
+            // 4. Draw handles
+            let handleSize: CGFloat = 10.0
+            let handles = [
+                NSRect(x: cropFrame.minX - handleSize/2, y: cropFrame.minY - handleSize/2, width: handleSize, height: handleSize),
+                NSRect(x: cropFrame.maxX - handleSize/2, y: cropFrame.minY - handleSize/2, width: handleSize, height: handleSize),
+                NSRect(x: cropFrame.minX - handleSize/2, y: cropFrame.maxY - handleSize/2, width: handleSize, height: handleSize),
+                NSRect(x: cropFrame.maxX - handleSize/2, y: cropFrame.maxY - handleSize/2, width: handleSize, height: handleSize)
+            ]
+            context.setFillColor(NSColor.white.cgColor)
+            context.setStrokeColor(NSColor.black.withAlphaComponent(0.5).cgColor)
+            context.setLineWidth(1.0)
+            for handle in handles {
+                context.fillEllipse(in: handle)
+                context.strokeEllipse(in: handle)
+            }
+
+            context.restoreGState()
+        }
+    }
+
+    enum CropHandle {
+        case none
+        case topLeft, topRight, bottomLeft, bottomRight
+        case body
+    }
+
+    private func hitTestCropFrame(_ point: NSPoint) -> CropHandle {
+        let handleSize: CGFloat = 20.0
+
+        let topLeft = NSRect(x: cropFrame.minX - handleSize/2, y: cropFrame.minY - handleSize/2, width: handleSize, height: handleSize)
+        let topRight = NSRect(x: cropFrame.maxX - handleSize/2, y: cropFrame.minY - handleSize/2, width: handleSize, height: handleSize)
+        let bottomLeft = NSRect(x: cropFrame.minX - handleSize/2, y: cropFrame.maxY - handleSize/2, width: handleSize, height: handleSize)
+        let bottomRight = NSRect(x: cropFrame.maxX - handleSize/2, y: cropFrame.maxY - handleSize/2, width: handleSize, height: handleSize)
+
+        if topLeft.contains(point) { return .topLeft }
+        if topRight.contains(point) { return .topRight }
+        if bottomLeft.contains(point) { return .bottomLeft }
+        if bottomRight.contains(point) { return .bottomRight }
+        if cropFrame.contains(point) { return .body }
+
+        return .none
+    }
+
+    private func constrainCropFrame(_ frame: NSRect) -> NSRect {
+        var f = frame
+        let minSize: CGFloat = 30.0
+
+        if f.size.width < minSize { f.size.width = minSize }
+        if f.size.height < minSize { f.size.height = minSize }
+
+        if f.minX < bounds.minX {
+            f.size.width += f.origin.x - bounds.minX
+            f.origin.x = bounds.minX
+        }
+        if f.maxX > bounds.maxX {
+            f.size.width = bounds.maxX - f.minX
+        }
+        if f.minY < bounds.minY {
+            f.size.height += f.origin.y - bounds.minY
+            f.origin.y = bounds.minY
+        }
+        if f.maxY > bounds.maxY {
+            f.size.height = bounds.maxY - f.origin.y
+        }
+
+        return f
+    }
+
+    private func handleCropMouseDown(with event: NSEvent) {
+        let startPoint = convert(event.locationInWindow, from: nil)
+        let activeHandle = hitTestCropFrame(startPoint)
+        guard activeHandle != .none else { return }
+
+        var lastPoint = startPoint
+
+        window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { [weak self] trackedEvent, stop in
+            guard let self = self, let trackedEvent = trackedEvent else { return }
+
+            switch trackedEvent.type {
+            case .leftMouseDragged:
+                let currentPoint = self.convert(trackedEvent.locationInWindow, from: nil)
+                let deltaX = currentPoint.x - lastPoint.x
+                let deltaY = currentPoint.y - lastPoint.y
+                lastPoint = currentPoint
+
+                var newFrame = self.cropFrame
+                switch activeHandle {
+                case .topLeft:
+                    newFrame.origin.x += deltaX
+                    newFrame.size.width -= deltaX
+                    newFrame.origin.y += deltaY
+                    newFrame.size.height -= deltaY
+                case .topRight:
+                    newFrame.size.width += deltaX
+                    newFrame.origin.y += deltaY
+                    newFrame.size.height -= deltaY
+                case .bottomLeft:
+                    newFrame.origin.x += deltaX
+                    newFrame.size.width -= deltaX
+                    newFrame.size.height += deltaY
+                case .bottomRight:
+                    newFrame.size.width += deltaX
+                    newFrame.size.height += deltaY
+                case .body:
+                    newFrame.origin.x += deltaX
+                    newFrame.origin.y += deltaY
+                case .none:
+                    break
+                }
+
+                self.cropFrame = self.constrainCropFrame(newFrame)
+
+            case .leftMouseUp:
+                stop.pointee = true
+            default:
+                break
+            }
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
         (enclosingScrollView as? PicScrollView)?.focusForKeyboard()
+        if isCropMode {
+            handleCropMouseDown(with: event)
+            return
+        }
+
         if event.clickCount == 2 {
             coordinator?.onDoubleClick()
             return
@@ -635,8 +853,7 @@ final class PicImageView: NSView {
         var previousLocation = event.locationInWindow
 
         window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { [weak self] trackedEvent, stop in
-            guard let self else { return }
-            guard let trackedEvent else { return }
+            guard let self = self, let trackedEvent = trackedEvent else { return }
 
             switch trackedEvent.type {
             case .leftMouseDragged:
@@ -667,4 +884,8 @@ extension Comparable {
 
 extension Notification.Name {
     static let imageViewportChanged = Notification.Name("imageViewportChanged")
+    static let startCropMode = Notification.Name("startCropMode")
+    static let cancelCropMode = Notification.Name("cancelCropMode")
+    static let applyCropMode = Notification.Name("applyCropMode")
+    static let executeCrop = Notification.Name("executeCrop")
 }
