@@ -640,11 +640,11 @@ struct HomeFolderAuthorizationView: View {
                     .font(.system(size: 64))
                     .foregroundStyle(.blue)
                 
-                Text("一次性授权主文件夹")
+                Text("一次性授权整个系统磁盘")
                     .font(.title2.bold())
                     .foregroundStyle(.white)
                 
-                Text("为了能够自由浏览桌面、下载、图片等所有文件夹下的图片而免去逐个授权的烦恼，我们需要您的一次性访问授权。")
+                Text("为了能够自由浏览桌面、下载、外部硬盘等所有目录下的图片而免去逐个授权的烦恼，我们需要您的一次性磁盘授权。")
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.8))
                     .multilineTextAlignment(.center)
@@ -655,7 +655,7 @@ struct HomeFolderAuthorizationView: View {
                         imageManager.requestHomeFolderAuthorization()
                     }
                 }) {
-                    Text("授权访问个人主目录")
+                    Text("授权访问整个系统磁盘")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 20)

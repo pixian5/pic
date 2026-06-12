@@ -361,12 +361,12 @@ final class ImageManager: ObservableObject {
     }
 
     func checkHomeFolderAccess() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        if tryResolveBookmark(for: home) {
+        let root = URL(fileURLWithPath: "/")
+        if tryResolveBookmark(for: root) {
             hasHomeFolderAccess = true
         } else {
             let fm = FileManager.default
-            if (try? fm.contentsOfDirectory(at: home, includingPropertiesForKeys: nil)) != nil {
+            if (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) != nil {
                 hasHomeFolderAccess = true
             } else {
                 hasHomeFolderAccess = false
@@ -375,14 +375,14 @@ final class ImageManager: ObservableObject {
     }
 
     func requestHomeFolderAuthorization() {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let root = URL(fileURLWithPath: "/")
         
         let panel = NSOpenPanel()
-        panel.directoryURL = home
+        panel.directoryURL = root
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "请直接点击“授权访问”以授权 PicViewer 访问您的个人主文件夹"
+        panel.message = "请直接点击“授权访问”以授权 PicViewer 访问您的整个硬盘"
         panel.prompt = "授权访问"
         
         if panel.runModal() == .OK, let url = panel.url {
