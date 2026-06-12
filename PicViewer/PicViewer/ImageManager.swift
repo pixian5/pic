@@ -296,30 +296,40 @@ final class ImageManager: ObservableObject {
     }
 
     private func tryResolveBookmark(for folderURL: URL) -> Bool {
-        let path = folderURL.standardizedFileURL.path
-        guard let bookmarks = UserDefaults.standard.dictionary(forKey: "secureBookmarks") as? [String: Data],
-              let bookmarkData = bookmarks[path] else {
-            return false
+        var currentURL = folderURL.standardizedFileURL
+        let bookmarksKey = "secureBookmarks"
+        
+        while true {
+            let path = currentURL.path
+            if let bookmarks = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data],
+               let bookmarkData = bookmarks[path] {
+                do {
+                    var isStale = false
+                    let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
+                    
+                    if isStale {
+                        let newBookmarkData = try resolvedURL.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+                        var updatedBookmarks = bookmarks
+                        updatedBookmarks[path] = newBookmarkData
+                        UserDefaults.standard.set(updatedBookmarks, forKey: bookmarksKey)
+                    }
+                    
+                    if resolvedURL.startAccessingSecurityScopedResource() {
+                        activeScopedURLs.insert(resolvedURL)
+                        return true
+                    }
+                } catch {
+                    print("Failed to resolve bookmark for \(path): \(error)")
+                }
+            }
+            
+            let parentURL = currentURL.deletingLastPathComponent()
+            if parentURL.path == currentURL.path {
+                break
+            }
+            currentURL = parentURL
         }
         
-        do {
-            var isStale = false
-            let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-            
-            if isStale {
-                let newBookmarkData = try resolvedURL.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                var updatedBookmarks = bookmarks
-                updatedBookmarks[path] = newBookmarkData
-                UserDefaults.standard.set(updatedBookmarks, forKey: "secureBookmarks")
-            }
-            
-            if resolvedURL.startAccessingSecurityScopedResource() {
-                activeScopedURLs.insert(resolvedURL)
-                return true
-            }
-        } catch {
-            print("Failed to resolve bookmark for \(path): \(error)")
-        }
         return false
     }
     
