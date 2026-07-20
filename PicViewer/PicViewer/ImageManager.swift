@@ -723,21 +723,32 @@ final class ImageManager: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([currentURL])
     }
 
+    private static let skipDeleteConfirmKey = "skipDeleteConfirmAfterFirst"
+
     func deleteCurrentImage() {
         guard let currentURL, let folderURL else { return }
 
-        // Confirm if there are unsaved edits; also warn before permanent trash.
+        // Confirm if there are unsaved edits first.
         if hasChanges {
             guard confirmDiscardChangesIfNeeded() else { return }
         }
 
-        let confirm = NSAlert()
-        confirm.alertStyle = .warning
-        confirm.messageText = "要将此图片移到废纸篓吗？"
-        confirm.informativeText = currentURL.lastPathComponent
-        confirm.addButton(withTitle: "移到废纸篓")
-        confirm.addButton(withTitle: "取消")
-        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+        // Trash confirmation only the first time; subsequent deletes go straight through.
+        let skipConfirm = UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey)
+        if !skipConfirm {
+            let confirm = NSAlert()
+            confirm.alertStyle = .warning
+            confirm.messageText = "要将此图片移到废纸篓吗？"
+            confirm.informativeText = """
+            \(currentURL.lastPathComponent)
+
+            说明：这是首次删除确认。确认后，之后使用退格键 / Delete / 右键菜单删除时将不再弹出此对话框，图片会直接移到废纸篓。
+            """
+            confirm.addButton(withTitle: "移到废纸篓")
+            confirm.addButton(withTitle: "取消")
+            guard confirm.runModal() == .alertFirstButtonReturn else { return }
+            UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
+        }
 
         // Ensure scoped write/trash access via parent bookmark when possible.
         _ = tryResolveBookmark(for: folderURL)

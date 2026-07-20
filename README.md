@@ -110,7 +110,7 @@ xattr -dr com.apple.quarantine /Applications/PicViewer.app
 | `/` | Toggle actual size / fit |
 | `⌘S` | Save edits (only when dirty) |
 | `⌘Z` | Discard edits |
-| `Delete` / `Backspace` | Move current image to Trash（有确认） |
+| `Delete` / `Backspace` | Move current image to Trash（仅首次确认，之后直接删除） |
 | `⌃⌘F` | Toggle fullscreen |
 | `⌘O` | Open image file |
 | `⇧⌘O` | Open folder |
