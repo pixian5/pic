@@ -90,13 +90,13 @@ struct ZoomableImageView: NSViewRepresentable {
             coordinator.setImage(image)
             DispatchQueue.main.async {
                 coordinator.applyInitialDisplayMode()
+                // Only steal focus when the displayed image actually changed.
                 scroll.focusForKeyboard()
             }
         } else {
+            // Do not call focusForKeyboard here — parent re-renders (info panel,
+            // minimap, controls) would yank first responder from selectable text.
             coordinator.handleViewportDidChange()
-            DispatchQueue.main.async {
-                scroll.focusForKeyboard()
-            }
         }
     }
 

@@ -42,6 +42,9 @@ struct PicViewerApp: App {
             ContentView()
                 .environmentObject(imageManager)
                 .frame(minWidth: 480, minHeight: 320)
+                .onAppear {
+                    appDelegate.imageManager = imageManager
+                }
         }
 
         Settings {
@@ -143,8 +146,21 @@ struct SettingsView: View {
 // MARK: - AppDelegate
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Weak reference so terminate can consult dirty state without retaining the model forever.
+    weak var imageManager: ImageManager?
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let imageManager, imageManager.hasChanges else {
+            return .terminateNow
+        }
+
+        // confirmDiscardChangesIfNeeded is @MainActor; AppDelegate callbacks run on main.
+        let canLeave = imageManager.confirmDiscardChangesIfNeeded()
+        return canLeave ? .terminateNow : .terminateCancel
     }
 
     /// Called when a file is opened via Finder (double-click, Open With…)

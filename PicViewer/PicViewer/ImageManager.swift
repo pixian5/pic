@@ -279,75 +279,110 @@ final class ImageManager: ObservableObject {
     }
 
     // MARK: - Sandbox Security Bookmarks & Active Scoped Access
-    nonisolated(unsafe) private var activeScopedURLs: Set<URL> = []
+    /// Refcount of successful startAccessingSecurityScopedResource calls per URL.
+    nonisolated(unsafe) private var activeScopedURLs: [URL: Int] = [:]
+
+    /// Canonical path for bookmark dictionary keys (resolves symlinks like /tmp → /private/tmp).
+    private func canonicalPath(for url: URL) -> String {
+        let std = url.standardizedFileURL
+        let resolved = std.resolvingSymlinksInPath()
+        return resolved.path
+    }
 
     func startAccessing(_ url: URL) {
         let std = url.standardizedFileURL
         if std.startAccessingSecurityScopedResource() {
-            activeScopedURLs.insert(std)
+            activeScopedURLs[std, default: 0] += 1
         }
     }
 
     nonisolated func stopAccessingAll() {
-        for url in activeScopedURLs {
-            url.stopAccessingSecurityScopedResource()
+        for (url, count) in activeScopedURLs {
+            for _ in 0..<count {
+                url.stopAccessingSecurityScopedResource()
+            }
         }
         activeScopedURLs.removeAll()
     }
 
     private func tryResolveBookmark(for folderURL: URL) -> Bool {
-        var currentURL = folderURL.standardizedFileURL
+        var currentURL = folderURL.standardizedFileURL.resolvingSymlinksInPath()
         let bookmarksKey = "secureBookmarks"
-        
+
         while true {
-            let path = currentURL.path
+            let path = canonicalPath(for: currentURL)
             if let bookmarks = UserDefaults.standard.dictionary(forKey: bookmarksKey) as? [String: Data],
                let bookmarkData = bookmarks[path] {
                 do {
                     var isStale = false
-                    let resolvedURL = try URL(resolvingBookmarkData: bookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale)
-                    
+                    let resolvedURL = try URL(
+                        resolvingBookmarkData: bookmarkData,
+                        options: .withSecurityScope,
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale
+                    )
+
                     if isStale {
-                        let newBookmarkData = try resolvedURL.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
-                        var updatedBookmarks = bookmarks
-                        updatedBookmarks[path] = newBookmarkData
-                        UserDefaults.standard.set(updatedBookmarks, forKey: bookmarksKey)
+                        // Re-create bookmark under the resolved URL's canonical path.
+                        if let newBookmarkData = try? resolvedURL.bookmarkData(
+                            options: .withSecurityScope,
+                            includingResourceValuesForKeys: nil,
+                            relativeTo: nil
+                        ) {
+                            var updatedBookmarks = bookmarks
+                            let newPath = canonicalPath(for: resolvedURL)
+                            if newPath != path {
+                                updatedBookmarks.removeValue(forKey: path)
+                            }
+                            updatedBookmarks[newPath] = newBookmarkData
+                            UserDefaults.standard.set(updatedBookmarks, forKey: bookmarksKey)
+                        }
                     }
-                    
+
                     if resolvedURL.startAccessingSecurityScopedResource() {
-                        activeScopedURLs.insert(resolvedURL)
+                        activeScopedURLs[resolvedURL, default: 0] += 1
                         return true
                     }
                 } catch {
                     print("Failed to resolve bookmark for \(path): \(error)")
                 }
             }
-            
+
             let parentURL = currentURL.deletingLastPathComponent()
             if parentURL.path == currentURL.path {
                 break
             }
             currentURL = parentURL
         }
-        
+
         return false
     }
-    
-    func saveBookmark(for folderURL: URL) {
+
+    @discardableResult
+    func saveBookmark(for folderURL: URL) -> Bool {
         let std = folderURL.standardizedFileURL
         do {
-            let bookmarkData = try std.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            let bookmarkData = try std.bookmarkData(
+                options: .withSecurityScope,
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
             var bookmarks = UserDefaults.standard.dictionary(forKey: "secureBookmarks") as? [String: Data] ?? [:]
-            bookmarks[std.path] = bookmarkData
+            bookmarks[canonicalPath(for: std)] = bookmarkData
             UserDefaults.standard.set(bookmarks, forKey: "secureBookmarks")
+            return true
         } catch {
             print("Failed to save bookmark for \(std.path): \(error)")
+            return false
         }
     }
 
     func requestFolderAuthorization() {
         guard let folderURL = folderURL else { return }
-        
+
+        // Capture the currently viewed file BEFORE reloading the folder listing.
+        let keepURL = currentURL?.standardizedFileURL
+
         let panel = NSOpenPanel()
         panel.directoryURL = folderURL
         panel.canChooseDirectories = true
@@ -355,14 +390,14 @@ final class ImageManager: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.message = "请选择并打开此文件夹，以授权 PicViewer 浏览该目录下的其他图片"
         panel.prompt = "授权访问"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
-            saveBookmark(for: url)
+            _ = saveBookmark(for: url)
             startAccessing(url)
             loadImages(from: url)
-            if let current = currentURL {
-                let std = current.standardizedFileURL
-                if let idx = images.firstIndex(where: { $0.standardizedFileURL == std }) {
+            if let keep = keepURL {
+                let keepPath = keep.path
+                if let idx = images.firstIndex(where: { $0.standardizedFileURL.path == keepPath }) {
                     currentIndex = idx
                 }
             }
@@ -372,60 +407,96 @@ final class ImageManager: ObservableObject {
 
     func checkHomeFolderAccess() {
         let root = URL(fileURLWithPath: "/")
-        if tryResolveBookmark(for: root) {
-            hasHomeFolderAccess = true
-        } else {
-            let fm = FileManager.default
-            if (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) != nil {
-                hasHomeFolderAccess = true
-            } else {
-                hasHomeFolderAccess = false
-            }
-        }
+        // Only treat a persisted root bookmark as full-volume access.
+        // Listing "/" can succeed under sandbox without user-selected root grant.
+        hasHomeFolderAccess = tryResolveBookmark(for: root)
     }
 
     func requestHomeFolderAuthorization() {
         let root = URL(fileURLWithPath: "/")
-        
+
         let panel = NSOpenPanel()
         panel.directoryURL = root
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.message = "请直接点击“授权访问”以授权 PicViewer 访问您的整个硬盘"
+        panel.message = "请保持选择“Macintosh HD / 电脑”根目录（/），然后点击“授权访问”。\n此授权覆盖本机启动卷；外置磁盘需另行授权对应卷。"
         panel.prompt = "授权访问"
-        
+
         if panel.runModal() == .OK, let url = panel.url {
-            saveBookmark(for: url)
-            startAccessing(url)
+            let chosen = url.standardizedFileURL.resolvingSymlinksInPath()
+            // Only accept the real root of the boot volume.
+            guard chosen.path == "/" else {
+                presentAlert(
+                    title: "未选择根目录",
+                    message: "请在打开面板中选择根目录“/”，不要选择桌面、文稿等子文件夹。外置磁盘请使用“打开文件夹”单独授权。"
+                )
+                return
+            }
+
+            guard saveBookmark(for: chosen) else {
+                presentAlert(
+                    title: "无法保存授权",
+                    message: "安全书签写入失败，请重试。若持续失败，请确认应用已正确签名并启用了 app-scope 书签权限。"
+                )
+                return
+            }
+
+            startAccessing(chosen)
             hasHomeFolderAccess = true
-            
+
+            let keepURL = currentURL?.standardizedFileURL
             if let folder = folderURL {
                 loadImages(from: folder)
+                if let keep = keepURL,
+                   let idx = images.firstIndex(where: { $0.standardizedFileURL.path == keep.path }) {
+                    currentIndex = idx
+                }
+                loadCurrentImage()
             }
         }
     }
 
     // MARK: - Image Editing Functions
+
+    /// Compatible drawing context for rotate/flip (avoids silent failure on odd alpha/indexed formats).
+    private func makeEditContext(width: Int, height: Int, reference: CGImage) -> CGContext? {
+        let colorSpace = reference.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
+        return CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo
+        )
+    }
+
+    private func warnUnsupportedEdit(_ action: String) {
+        presentAlert(
+            title: "无法\(action)",
+            message: "当前图片像素格式不受支持，或图像数据无效。"
+        )
+    }
+
     func rotateCurrentImage(clockwise: Bool) {
         guard let currentImage = currentImage else { return }
-        
-        guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+
+        guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            warnUnsupportedEdit("旋转")
+            return
+        }
         let width = cgImage.width
         let height = cgImage.height
         let newSize = CGSize(width: height, height: width)
-        
-        guard let colorSpace = cgImage.colorSpace,
-              let context = CGContext(
-                data: nil,
-                width: height,
-                height: width,
-                bitsPerComponent: cgImage.bitsPerComponent,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: cgImage.bitmapInfo.rawValue
-              ) else { return }
-              
+
+        guard let context = makeEditContext(width: height, height: width, reference: cgImage) else {
+            warnUnsupportedEdit("旋转")
+            return
+        }
+
         context.translateBy(x: newSize.width / 2, y: newSize.height / 2)
         if clockwise {
             context.rotate(by: -.pi / 2)
@@ -433,31 +504,31 @@ final class ImageManager: ObservableObject {
             context.rotate(by: .pi / 2)
         }
         context.draw(cgImage, in: CGRect(x: -CGFloat(width) / 2, y: -CGFloat(height) / 2, width: CGFloat(width), height: CGFloat(height)))
-        
-        guard let rotatedCGImage = context.makeImage() else { return }
+
+        guard let rotatedCGImage = context.makeImage() else {
+            warnUnsupportedEdit("旋转")
+            return
+        }
         self.currentImage = NSImage(cgImage: rotatedCGImage, size: newSize)
         self.hasChanges = true
     }
 
     func flipCurrentImage(horizontal: Bool) {
         guard let currentImage = currentImage else { return }
-        
-        guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
+
+        guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            warnUnsupportedEdit("翻转")
+            return
+        }
         let width = cgImage.width
         let height = cgImage.height
         let size = CGSize(width: width, height: height)
-        
-        guard let colorSpace = cgImage.colorSpace,
-              let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: cgImage.bitsPerComponent,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: cgImage.bitmapInfo.rawValue
-              ) else { return }
-              
+
+        guard let context = makeEditContext(width: width, height: height, reference: cgImage) else {
+            warnUnsupportedEdit("翻转")
+            return
+        }
+
         if horizontal {
             context.translateBy(x: CGFloat(width), y: 0)
             context.scaleBy(x: -1, y: 1)
@@ -465,40 +536,62 @@ final class ImageManager: ObservableObject {
             context.translateBy(x: 0, y: CGFloat(height))
             context.scaleBy(x: 1, y: -1)
         }
-        
+
         context.draw(cgImage, in: CGRect(origin: .zero, size: size))
-        guard let flippedCGImage = context.makeImage() else { return }
+        guard let flippedCGImage = context.makeImage() else {
+            warnUnsupportedEdit("翻转")
+            return
+        }
         self.currentImage = NSImage(cgImage: flippedCGImage, size: size)
         self.hasChanges = true
     }
 
     func cropCurrentImage(to pixelRect: CGRect) {
         guard let currentImage = currentImage else { return }
-        
+
         guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         let imgWidth = CGFloat(cgImage.width)
         let imgHeight = CGFloat(cgImage.height)
-        
+
         let intersection = pixelRect.intersection(CGRect(x: 0, y: 0, width: imgWidth, height: imgHeight))
         guard !intersection.isNull, !intersection.isEmpty else { return }
-        
+
         guard let croppedCGImage = cgImage.cropping(to: intersection) else { return }
         self.currentImage = NSImage(cgImage: croppedCGImage, size: intersection.size)
         self.hasChanges = true
     }
 
-    func saveChanges() {
-        guard let currentImage = currentImage, let url = currentURL else { return }
-        
+    /// Returns true when the file was written successfully.
+    @discardableResult
+    func saveChanges() -> Bool {
+        guard hasChanges else { return true }
+        guard let currentImage = currentImage, let url = currentURL else { return false }
+
+        // Ensure folder-level write access when available.
+        if let folder = folderURL {
+            _ = tryResolveBookmark(for: folder)
+        }
         startAccessing(url)
-        
+
         do {
             guard let cgImage = currentImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                throw NSError(domain: "PicViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not get CGImage from NSImage"])
+                throw NSError(domain: "PicViewer", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法从当前图像生成可保存的像素数据"])
             }
-            
+
+            let ext = url.pathExtension.lowercased()
+            // Animated / multi-frame formats: refuse destructive single-frame overwrite.
+            if ["gif", "webp", "tiff", "tif"].contains(ext),
+               let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+               CGImageSourceGetCount(source) > 1 {
+                throw NSError(
+                    domain: "PicViewer",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: "暂不支持保存已编辑的多帧/动画图片（GIF、动画 WebP、多页 TIFF），以免丢失其余帧。请另存为 PNG/JPEG，或放弃修改。"]
+                )
+            }
+
             let uti: CFString
-            switch url.pathExtension.lowercased() {
+            switch ext {
             case "png": uti = UTType.png.identifier as CFString
             case "jpg", "jpeg": uti = UTType.jpeg.identifier as CFString
             case "webp": uti = UTType.webP.identifier as CFString
@@ -508,25 +601,40 @@ final class ImageManager: ObservableObject {
             case "heic", "heif": uti = UTType.heic.identifier as CFString
             default: uti = UTType.jpeg.identifier as CFString
             }
-            
+
+            // Preserve source metadata (EXIF/TIFF/GPS) where possible.
+            var properties: [CFString: Any] = [:]
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+               let sourceProps = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+                properties = sourceProps
+                // Pixels are already baked; force upright orientation.
+                properties[kCGImagePropertyOrientation] = 1
+                if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                    tiff[kCGImagePropertyTIFFOrientation] = 1
+                    properties[kCGImagePropertyTIFFDictionary] = tiff
+                }
+            }
+
             guard let destination = CGImageDestinationCreateWithURL(url as CFURL, uti, 1, nil) else {
-                throw NSError(domain: "PicViewer", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not create image destination"])
+                throw NSError(domain: "PicViewer", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法创建图像写入目标（可能缺少写权限）"])
             }
-            
-            CGImageDestinationAddImage(destination, cgImage, nil)
+
+            CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
             if !CGImageDestinationFinalize(destination) {
-                throw NSError(domain: "PicViewer", code: 3, userInfo: [NSLocalizedDescriptionKey: "Failed to write image data to disk"])
+                throw NSError(domain: "PicViewer", code: 3, userInfo: [NSLocalizedDescriptionKey: "写入磁盘失败"])
             }
-            
+
             self.hasChanges = false
+            return true
         } catch {
             presentAlert(
                 title: "无法保存修改",
                 message: error.localizedDescription
             )
+            return false
         }
     }
-    
+
     func discardChanges() {
         loadCurrentImage()
         self.hasChanges = false
@@ -534,7 +642,7 @@ final class ImageManager: ObservableObject {
 
     func confirmDiscardChangesIfNeeded() -> Bool {
         guard hasChanges else { return true }
-        
+
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "要保存对图片的修改吗？"
@@ -542,11 +650,11 @@ final class ImageManager: ObservableObject {
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "不保存")
         alert.addButton(withTitle: "取消")
-        
+
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
-            saveChanges()
-            return true
+            // Only proceed when save actually succeeds.
+            return saveChanges()
         } else if response == .alertSecondButtonReturn {
             discardChanges()
             return true
@@ -618,11 +726,30 @@ final class ImageManager: ObservableObject {
     func deleteCurrentImage() {
         guard let currentURL, let folderURL else { return }
 
+        // Confirm if there are unsaved edits; also warn before permanent trash.
+        if hasChanges {
+            guard confirmDiscardChangesIfNeeded() else { return }
+        }
+
+        let confirm = NSAlert()
+        confirm.alertStyle = .warning
+        confirm.messageText = "要将此图片移到废纸篓吗？"
+        confirm.informativeText = currentURL.lastPathComponent
+        confirm.addButton(withTitle: "移到废纸篓")
+        confirm.addButton(withTitle: "取消")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        // Ensure scoped write/trash access via parent bookmark when possible.
+        _ = tryResolveBookmark(for: folderURL)
+        startAccessing(currentURL)
+        startAccessing(folderURL)
+
         let currentPath = currentURL.standardizedFileURL.path
         do {
             var resultingURL: NSURL?
             try FileManager.default.trashItem(at: currentURL, resultingItemURL: &resultingURL)
 
+            hasChanges = false
             let previousIndex = currentIndex
             loadImages(from: folderURL)
 

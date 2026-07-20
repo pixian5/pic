@@ -54,12 +54,21 @@ struct ContentView: View {
         .onChange(of: imageManager.currentURL?.path) { _, _ in
             updateWindowTitle()
             viewportSnapshot = nil
+            // Rebuild of ZoomableImageView drops crop mode; keep SwiftUI state in sync.
+            if isCropMode {
+                isCropMode = false
+                NotificationCenter.default.post(name: .cancelCropMode, object: nil)
+            }
         }
         .onChange(of: imageManager.currentIndex) { _, _ in
             if imageManager.hasImages {
                 bumpControlsVisibility()
             }
             updateWindowTitle()
+            if isCropMode {
+                isCropMode = false
+                NotificationCenter.default.post(name: .cancelCropMode, object: nil)
+            }
         }
         .onChange(of: imageManager.totalCount) { _, _ in
             updateWindowTitle()
@@ -171,10 +180,14 @@ struct ContentView: View {
 
             switch (event.keyCode, modifiers) {
             case (1, [.command]): // Command + S
-                imageManager.saveChanges()
+                if imageManager.hasChanges {
+                    _ = imageManager.saveChanges()
+                }
                 return nil
             case (6, [.command]): // Command + Z
-                imageManager.discardChanges()
+                if imageManager.hasChanges {
+                    imageManager.discardChanges()
+                }
                 return nil
             case (8, [.command]):
                 imageManager.copyCurrentImageToPasteboard()
@@ -324,7 +337,7 @@ struct ContentView: View {
                         .controlSize(.small)
                         
                         Button("保存 (⌘S)") {
-                            imageManager.saveChanges()
+                            _ = imageManager.saveChanges()
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.blue)
@@ -640,22 +653,22 @@ struct HomeFolderAuthorizationView: View {
                     .font(.system(size: 64))
                     .foregroundStyle(.blue)
                 
-                Text("一次性授权整个系统磁盘")
+                Text("一次性授权本机启动卷")
                     .font(.title2.bold())
                     .foregroundStyle(.white)
-                
-                Text("为了能够自由浏览桌面、下载、外部硬盘等所有目录下的图片而免去逐个授权的烦恼，我们需要您的一次性磁盘授权。")
+
+                Text("为了自由浏览桌面、下载、文稿等本机目录而免去逐个授权，请授权访问本机根目录（/）。外置硬盘 / 网络卷需使用「打开文件夹」单独授权。")
                     .font(.system(size: 13))
                     .foregroundStyle(.white.opacity(0.8))
                     .multilineTextAlignment(.center)
                     .frame(width: 320)
-                
+
                 Button(action: {
                     withAnimation {
                         imageManager.requestHomeFolderAuthorization()
                     }
                 }) {
-                    Text("授权访问整个系统磁盘")
+                    Text("授权访问本机根目录")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 20)
@@ -666,9 +679,10 @@ struct HomeFolderAuthorizationView: View {
                         )
                 }
                 .buttonStyle(.plain)
-                
+
                 Button(action: {
                     withAnimation {
+                        // Session-only skip; next launch will prompt again if no root bookmark.
                         imageManager.hasHomeFolderAccess = true
                     }
                 }) {
