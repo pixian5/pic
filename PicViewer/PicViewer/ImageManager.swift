@@ -184,7 +184,13 @@ final class ImageManager: ObservableObject {
             )
 
             let urls = entries
-                .filter { Self.supportedExtensions.contains($0.pathExtension.lowercased()) }
+                .filter { url in
+                    guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
+                          let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else {
+                        return false
+                    }
+                    return values.isRegularFile == true
+                }
                 .sorted {
                     $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
                 }
@@ -210,17 +216,20 @@ final class ImageManager: ObservableObject {
         let folder = std.deletingLastPathComponent()
         
         stopAccessingAll()
-        _ = tryResolveBookmark(for: folder)
-        startAccessing(std)
+        let resolvedFolder = tryResolveBookmark(for: folder) ?? folder
+        let resolvedURL = resolvedFolder.standardizedFileURL == folder.standardizedFileURL
+            ? std
+            : resolvedFolder.appendingPathComponent(std.lastPathComponent)
+        startAccessing(resolvedURL)
         
-        loadImages(from: folder)
+        loadImages(from: resolvedFolder)
 
-        if let idx = images.firstIndex(where: { $0.standardizedFileURL == std }) {
+        if let idx = images.firstIndex(where: { $0.standardizedFileURL == resolvedURL }) {
             currentIndex = idx
         } else {
             currentIndex = 0
             if images.isEmpty {
-                images = [std]
+                images = [resolvedURL]
             }
         }
         loadCurrentImage()
@@ -305,7 +314,10 @@ final class ImageManager: ObservableObject {
         activeScopedURLs.removeAll()
     }
 
-    private func tryResolveBookmark(for folderURL: URL) -> Bool {
+    /// Resolve a matching bookmark and return the usable directory URL.
+    /// Parent bookmarks grant access to the requested child but should not replace its path.
+    private func tryResolveBookmark(for folderURL: URL) -> URL? {
+        let requestedPath = canonicalPath(for: folderURL)
         var currentURL = folderURL.standardizedFileURL.resolvingSymlinksInPath()
         let bookmarksKey = "secureBookmarks"
 
@@ -341,7 +353,7 @@ final class ImageManager: ObservableObject {
 
                     if resolvedURL.startAccessingSecurityScopedResource() {
                         activeScopedURLs[resolvedURL, default: 0] += 1
-                        return true
+                        return path == requestedPath ? resolvedURL : folderURL.standardizedFileURL
                     }
                 } catch {
                     print("Failed to resolve bookmark for \(path): \(error)")
@@ -355,7 +367,7 @@ final class ImageManager: ObservableObject {
             currentURL = parentURL
         }
 
-        return false
+        return nil
     }
 
     @discardableResult
@@ -409,7 +421,7 @@ final class ImageManager: ObservableObject {
         let root = URL(fileURLWithPath: "/")
         // Only treat a persisted root bookmark as full-volume access.
         // Listing "/" can succeed under sandbox without user-selected root grant.
-        hasHomeFolderAccess = tryResolveBookmark(for: root)
+        hasHomeFolderAccess = tryResolveBookmark(for: root) != nil
     }
 
     func requestHomeFolderAuthorization() {
@@ -565,11 +577,25 @@ final class ImageManager: ObservableObject {
     @discardableResult
     func saveChanges() -> Bool {
         guard hasChanges else { return true }
-        guard let currentImage = currentImage, let url = currentURL else { return false }
+        guard let currentImage = currentImage, let originalURL = currentURL else { return false }
+
+        var url = originalURL
 
         // Ensure folder-level write access when available.
         if let folder = folderURL {
-            _ = tryResolveBookmark(for: folder)
+            if let resolvedFolder = tryResolveBookmark(for: folder),
+               resolvedFolder.standardizedFileURL != folder.standardizedFileURL {
+                let filename = originalURL.lastPathComponent
+                loadImages(from: resolvedFolder)
+                if let idx = images.firstIndex(where: { $0.lastPathComponent == filename }) {
+                    currentIndex = idx
+                    url = images[idx]
+                } else {
+                    url = resolvedFolder.appendingPathComponent(filename)
+                    images = [url]
+                    currentIndex = 0
+                }
+            }
         }
         startAccessing(url)
 
@@ -735,6 +761,7 @@ final class ImageManager: ObservableObject {
 
         // Trash confirmation only the first time; subsequent deletes go straight through.
         let skipConfirm = UserDefaults.standard.bool(forKey: Self.skipDeleteConfirmKey)
+        var confirmedFirstDelete = false
         if !skipConfirm {
             let confirm = NSAlert()
             confirm.alertStyle = .warning
@@ -747,22 +774,29 @@ final class ImageManager: ObservableObject {
             confirm.addButton(withTitle: "移到废纸篓")
             confirm.addButton(withTitle: "取消")
             guard confirm.runModal() == .alertFirstButtonReturn else { return }
-            UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
+            confirmedFirstDelete = true
         }
 
         // Ensure scoped write/trash access via parent bookmark when possible.
-        _ = tryResolveBookmark(for: folderURL)
-        startAccessing(currentURL)
-        startAccessing(folderURL)
+        let resolvedFolder = tryResolveBookmark(for: folderURL) ?? folderURL
+        let resolvedCurrentURL = resolvedFolder.standardizedFileURL == folderURL.standardizedFileURL
+            ? currentURL
+            : resolvedFolder.appendingPathComponent(currentURL.lastPathComponent)
+        startAccessing(resolvedCurrentURL)
+        startAccessing(resolvedFolder)
 
-        let currentPath = currentURL.standardizedFileURL.path
+        let currentPath = resolvedCurrentURL.standardizedFileURL.path
         do {
             var resultingURL: NSURL?
-            try FileManager.default.trashItem(at: currentURL, resultingItemURL: &resultingURL)
+            try FileManager.default.trashItem(at: resolvedCurrentURL, resultingItemURL: &resultingURL)
+
+            if confirmedFirstDelete {
+                UserDefaults.standard.set(true, forKey: Self.skipDeleteConfirmKey)
+            }
 
             hasChanges = false
             let previousIndex = currentIndex
-            loadImages(from: folderURL)
+            loadImages(from: resolvedFolder)
 
             guard hasImages else {
                 currentIndex = 0

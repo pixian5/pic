@@ -181,12 +181,14 @@ struct ZoomableImageView: NSViewRepresentable {
             let boundsSize = imageView.bounds.size
             guard boundsSize.width > 0, boundsSize.height > 0 else { return }
             
-            let scale = imageNaturalSize.width / boundsSize.width
+            let scaleX = imageNaturalSize.width / boundsSize.width
+            let scaleY = imageNaturalSize.height / boundsSize.height
             let pixelRect = CGRect(
-                x: cropFrame.origin.x * scale,
-                y: cropFrame.origin.y * scale,
-                width: cropFrame.size.width * scale,
-                height: cropFrame.size.height * scale
+                x: cropFrame.minX * scaleX,
+                // NSView is flipped while CGImage crop coordinates are bottom-left based.
+                y: (boundsSize.height - cropFrame.maxY) * scaleY,
+                width: cropFrame.width * scaleX,
+                height: cropFrame.height * scaleY
             )
             
             NotificationCenter.default.post(name: .executeCrop, object: pixelRect)
