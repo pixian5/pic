@@ -218,7 +218,8 @@ struct ZoomableImageView: NSViewRepresentable {
             case .actualSize:
                 return .actualSize
             case .fillWindow:
-                return .shortestEdgeFill
+                // “铺满窗口” means fit entirely inside the viewport; never crop an edge.
+                return .fitToWindow
             case .actualSizeOrFit:
                 return .actualSizeOrFit
             }
