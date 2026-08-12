@@ -16,6 +16,7 @@ A clean, native macOS image viewer built with **Swift + SwiftUI + AppKit**.
 | **Fullscreen** | Double-click image · ⌃⌘F shortcut · on-screen button |
 | **Edit** | Rotate · flip · crop · save (⌘S) · discard (⌘Z)；保存时尽量保留 EXIF/GPS |
 | **UI** | Auto-hiding overlay · image counter · filename · EXIF info panel · minimap |
+| **Animation** | Settings can enable or disable GIF / animated WebP playback; playback is enabled by default |
 | **Persistence** | Window size remembered between sessions；安全书签跨启动恢复目录授权 |
 
 ---

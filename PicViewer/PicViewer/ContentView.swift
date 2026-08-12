@@ -82,6 +82,7 @@ struct ContentView: View {
         if let img = imageManager.currentImage {
             ZoomableImageView(
                 image:         img,
+                animationFrames: imageManager.currentAnimationFrames,
                 onPrevious:    { navigatePrevious() },
                 onNext:        { navigateNext()     },
                 onDoubleClick: { toggleFullscreen() }

@@ -38,6 +38,7 @@ struct ImageViewportSnapshot {
 struct ZoomableImageView: NSViewRepresentable {
 
     let image:         NSImage
+    let animationFrames: [ImageManager.AnimatedImageFrame]
     var onPrevious:    () -> Void
     var onNext:        () -> Void
     var onDoubleClick: () -> Void
@@ -72,6 +73,7 @@ struct ZoomableImageView: NSViewRepresentable {
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomToggleActualFit), name: .zoomToggleActualFit, object: nil)
 
         context.coordinator.setImage(image)
+        context.coordinator.setAnimationFrames(animationFrames)
         DispatchQueue.main.async {
             context.coordinator.applyInitialDisplayMode()
             scroll.focusForKeyboard()
@@ -87,16 +89,24 @@ struct ZoomableImageView: NSViewRepresentable {
         coordinator.onDoubleClick = onDoubleClick
 
         if coordinator.currentImage !== image {
-            coordinator.setImage(image)
+            let preserveLayout = coordinator.currentImage != nil
+            coordinator.setImage(image, resetLayout: !preserveLayout)
             DispatchQueue.main.async {
-                coordinator.applyInitialDisplayMode()
+                if preserveLayout {
+                    coordinator.handleViewportDidChange()
+                } else {
+                    coordinator.applyInitialDisplayMode()
+                }
                 // Only steal focus when the displayed image actually changed.
-                scroll.focusForKeyboard()
+                if !preserveLayout {
+                    scroll.focusForKeyboard()
+                }
             }
         } else {
             // Do not call focusForKeyboard here — parent re-renders (info panel,
             // minimap, controls) would yank first responder from selectable text.
             coordinator.handleViewportDidChange()
+            coordinator.setAnimationFrames(animationFrames)
         }
     }
 
@@ -194,17 +204,30 @@ struct ZoomableImageView: NSViewRepresentable {
             NotificationCenter.default.post(name: .executeCrop, object: pixelRect)
         }
 
-        func setImage(_ image: NSImage) {
+        func setImage(_ image: NSImage, resetLayout: Bool = true) {
             currentImage = image
             guard let imageView else { return }
-            imageNaturalSize = naturalSize(image)
+            let newNaturalSize = naturalSize(image)
+            if resetLayout || imageNaturalSize == .zero || imageNaturalSize != newNaturalSize {
+                imageNaturalSize = newNaturalSize
+            }
             imageView.setImage(image)
-            zoomScale = 1.0
+            if resetLayout {
+                zoomScale = 1.0
+            }
             imageView.frame.size = imageNaturalSize
-            displayMode = defaultDisplayMode()
-            pendingDisplayMode = displayMode
-            lastViewportSize = .zero
+            if resetLayout {
+                displayMode = defaultDisplayMode()
+                pendingDisplayMode = displayMode
+                lastViewportSize = .zero
+            } else {
+                layoutDocumentForCurrentState()
+            }
             publishViewportSnapshot()
+        }
+
+        func setAnimationFrames(_ frames: [ImageManager.AnimatedImageFrame]) {
+            imageView?.setAnimationFrames(frames)
         }
 
         func applyInitialDisplayMode() {
@@ -650,6 +673,9 @@ final class PicImageView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     private var cgImage: CGImage?
+    private var animationFrames: [ImageManager.AnimatedImageFrame] = []
+    private var animationFrameIndex = 0
+    private var animationTimer: Timer?
     var isCropMode: Bool = false {
         didSet { needsDisplay = true }
     }
@@ -664,6 +690,44 @@ final class PicImageView: NSView {
     func setImage(_ image: NSImage) {
         cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
         needsDisplay = true
+    }
+
+    func setAnimationFrames(_ frames: [ImageManager.AnimatedImageFrame]) {
+        if frames.count == animationFrames.count,
+           frames.first?.image === animationFrames.first?.image {
+            return
+        }
+        animationTimer?.invalidate()
+        animationTimer = nil
+        animationFrames = frames
+        animationFrameIndex = 0
+
+        guard let first = frames.first else {
+            needsDisplay = true
+            return
+        }
+
+        cgImage = first.image
+        needsDisplay = true
+        scheduleNextAnimationFrame()
+    }
+
+    private func scheduleNextAnimationFrame() {
+        guard animationFrames.count > 1 else { return }
+        let duration = max(animationFrames[animationFrameIndex].duration, 0.02)
+        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
+            guard let self, !self.animationFrames.isEmpty else { return }
+            self.animationFrameIndex = (self.animationFrameIndex + 1) % self.animationFrames.count
+            self.cgImage = self.animationFrames[self.animationFrameIndex].image
+            self.needsDisplay = true
+            self.scheduleNextAnimationFrame()
+        }
+        animationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    deinit {
+        animationTimer?.invalidate()
     }
 
     override var isFlipped: Bool { true }
