@@ -82,7 +82,6 @@ struct ContentView: View {
         if let img = imageManager.currentImage {
             ZoomableImageView(
                 image:         img,
-                animationFrames: imageManager.currentAnimationFrames,
                 onPrevious:    { navigatePrevious() },
                 onNext:        { navigateNext()     },
                 onDoubleClick: { toggleFullscreen() }
@@ -103,10 +102,6 @@ struct ContentView: View {
                     imageManager.deleteCurrentImage()
                 }
             }
-            // Use .id so SwiftUI rebuilds the NSScrollView when the image changes,
-            // producing a smooth fade between images.
-            .id(imageManager.currentIndex)
-            .transition(.opacity.animation(.easeInOut(duration: 0.15)))
         } else if imageManager.isLoading {
             ProgressView()
                 .progressViewStyle(.circular)

@@ -30,8 +30,8 @@ enum DefaultImageDisplayMode: String, CaseIterable, Identifiable {
     }
 }
 
-enum AnimationPlaybackPreference {
-    static let userDefaultsKey = "playAnimatedImages"
+enum ImageTransitionPreference {
+    static let userDefaultsKey = "animateImageTransitions"
 
     static func current() -> Bool {
         guard UserDefaults.standard.object(forKey: userDefaultsKey) != nil else {
@@ -136,7 +136,7 @@ struct PicViewerApp: App {
 
 struct SettingsView: View {
     @AppStorage(DefaultImageDisplayMode.userDefaultsKey) private var defaultDisplayModeRawValue = DefaultImageDisplayMode.fillWindow.rawValue
-    @AppStorage(AnimationPlaybackPreference.userDefaultsKey) private var playAnimatedImages = true
+    @AppStorage(ImageTransitionPreference.userDefaultsKey) private var animateImageTransitions = true
 
     var body: some View {
         Form {
@@ -147,15 +147,12 @@ struct SettingsView: View {
             }
             .pickerStyle(.radioGroup)
 
-            Toggle("播放动画图片", isOn: $playAnimatedImages)
+            Toggle("切换图片时使用动画", isOn: $animateImageTransitions)
         }
         .padding(20)
         .frame(width: 420)
         .onChange(of: defaultDisplayModeRawValue) { _, _ in
             NotificationCenter.default.post(name: .defaultDisplayModeChanged, object: nil)
-        }
-        .onChange(of: playAnimatedImages) { _, _ in
-            NotificationCenter.default.post(name: .animationPlaybackChanged, object: nil)
         }
     }
 }
@@ -197,7 +194,6 @@ extension Notification.Name {
     static let zoomFit        = Notification.Name("zoomFit")
     static let zoomToggleActualFit = Notification.Name("zoomToggleActualFit")
     static let requestFullResolution = Notification.Name("requestFullResolution")
-    static let animationPlaybackChanged = Notification.Name("animationPlaybackChanged")
     static let defaultDisplayModeChanged = Notification.Name("defaultDisplayModeChanged")
     static let previousImage  = Notification.Name("previousImage")
     static let nextImage      = Notification.Name("nextImage")

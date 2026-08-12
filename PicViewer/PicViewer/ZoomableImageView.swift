@@ -38,7 +38,6 @@ struct ImageViewportSnapshot {
 struct ZoomableImageView: NSViewRepresentable {
 
     let image:         NSImage
-    let animationFrames: [ImageManager.AnimatedImageFrame]
     var onPrevious:    () -> Void
     var onNext:        () -> Void
     var onDoubleClick: () -> Void
@@ -73,7 +72,6 @@ struct ZoomableImageView: NSViewRepresentable {
         nc.addObserver(context.coordinator, selector: #selector(Coordinator.zoomToggleActualFit), name: .zoomToggleActualFit, object: nil)
 
         context.coordinator.setImage(image)
-        context.coordinator.setAnimationFrames(animationFrames)
         DispatchQueue.main.async {
             context.coordinator.applyInitialDisplayMode()
             scroll.focusForKeyboard()
@@ -106,7 +104,6 @@ struct ZoomableImageView: NSViewRepresentable {
             // Do not call focusForKeyboard here — parent re-renders (info panel,
             // minimap, controls) would yank first responder from selectable text.
             coordinator.handleViewportDidChange()
-            coordinator.setAnimationFrames(animationFrames)
         }
     }
 
@@ -224,10 +221,6 @@ struct ZoomableImageView: NSViewRepresentable {
                 layoutDocumentForCurrentState()
             }
             publishViewportSnapshot()
-        }
-
-        func setAnimationFrames(_ frames: [ImageManager.AnimatedImageFrame]) {
-            imageView?.setAnimationFrames(frames)
         }
 
         func applyInitialDisplayMode() {
@@ -673,9 +666,9 @@ final class PicImageView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     private var cgImage: CGImage?
-    private var animationFrames: [ImageManager.AnimatedImageFrame] = []
-    private var animationFrameIndex = 0
-    private var animationTimer: Timer?
+    private var previousCGImage: CGImage?
+    private var transitionProgress: CGFloat = 1.0
+    private var transitionTimer: Timer?
     var isCropMode: Bool = false {
         didSet { needsDisplay = true }
     }
@@ -688,46 +681,43 @@ final class PicImageView: NSView {
     }
 
     func setImage(_ image: NSImage) {
-        cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        let nextCGImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        guard let nextCGImage else { return }
+
+        transitionTimer?.invalidate()
+        transitionTimer = nil
+
+        if ImageTransitionPreference.current(),
+           let currentCGImage = cgImage,
+           currentCGImage !== nextCGImage {
+            previousCGImage = currentCGImage
+            transitionProgress = 0
+            cgImage = nextCGImage
+            let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                self.transitionProgress = min(1, self.transitionProgress + (1.0 / 9.0))
+                self.needsDisplay = true
+                if self.transitionProgress >= 1 {
+                    self.previousCGImage = nil
+                    timer.invalidate()
+                    self.transitionTimer = nil
+                }
+            }
+            transitionTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        } else {
+            previousCGImage = nil
+            transitionProgress = 1
+            cgImage = nextCGImage
+        }
         needsDisplay = true
-    }
-
-    func setAnimationFrames(_ frames: [ImageManager.AnimatedImageFrame]) {
-        if frames.count == animationFrames.count,
-           frames.first?.image === animationFrames.first?.image {
-            return
-        }
-        animationTimer?.invalidate()
-        animationTimer = nil
-        animationFrames = frames
-        animationFrameIndex = 0
-
-        guard let first = frames.first else {
-            needsDisplay = true
-            return
-        }
-
-        cgImage = first.image
-        needsDisplay = true
-        scheduleNextAnimationFrame()
-    }
-
-    private func scheduleNextAnimationFrame() {
-        guard animationFrames.count > 1 else { return }
-        let duration = max(animationFrames[animationFrameIndex].duration, 0.02)
-        let timer = Timer(timeInterval: duration, repeats: false) { [weak self] _ in
-            guard let self, !self.animationFrames.isEmpty else { return }
-            self.animationFrameIndex = (self.animationFrameIndex + 1) % self.animationFrames.count
-            self.cgImage = self.animationFrames[self.animationFrameIndex].image
-            self.needsDisplay = true
-            self.scheduleNextAnimationFrame()
-        }
-        animationTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
     }
 
     deinit {
-        animationTimer?.invalidate()
+        transitionTimer?.invalidate()
     }
 
     override var isFlipped: Bool { true }
@@ -739,11 +729,10 @@ final class PicImageView: NSView {
               let context = NSGraphicsContext.current?.cgContext else { return }
 
         context.interpolationQuality = .high
-        context.saveGState()
-        context.translateBy(x: 0, y: bounds.height)
-        context.scaleBy(x: 1, y: -1)
-        context.draw(cgImage, in: CGRect(origin: .zero, size: bounds.size))
-        context.restoreGState()
+        if let previousCGImage, transitionProgress < 1 {
+            drawImage(previousCGImage, in: context, alpha: 1 - transitionProgress)
+        }
+        drawImage(cgImage, in: context, alpha: transitionProgress)
 
         if isCropMode {
             guard let context = NSGraphicsContext.current?.cgContext else { return }
@@ -805,6 +794,15 @@ final class PicImageView: NSView {
 
             context.restoreGState()
         }
+    }
+
+    private func drawImage(_ image: CGImage, in context: CGContext, alpha: CGFloat) {
+        context.saveGState()
+        context.setAlpha(alpha)
+        context.translateBy(x: 0, y: bounds.height)
+        context.scaleBy(x: 1, y: -1)
+        context.draw(image, in: CGRect(origin: .zero, size: bounds.size))
+        context.restoreGState()
     }
 
     enum CropHandle {

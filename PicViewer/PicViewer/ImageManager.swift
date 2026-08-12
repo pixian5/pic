@@ -11,15 +11,9 @@ import ImageIO
 @MainActor
 final class ImageManager: ObservableObject {
 
-    struct AnimatedImageFrame {
-        let image: CGImage
-        let duration: TimeInterval
-    }
-
     private struct DecodedImage {
         let cgImage: CGImage
         let isDownsampled: Bool
-        let frames: [AnimatedImageFrame]
     }
 
     struct ImageDetails {
@@ -41,7 +35,6 @@ final class ImageManager: ObservableObject {
     @Published var images:        [URL]     = []
     @Published var currentIndex:  Int       = 0
     @Published var currentImage:  NSImage?  = nil
-    @Published var currentAnimationFrames: [AnimatedImageFrame] = []
     @Published var isLoading:     Bool      = false
     @Published var folderURL:     URL?      = nil
     @Published var folderAuthorized: Bool   = true
@@ -180,12 +173,6 @@ final class ImageManager: ObservableObject {
             name: .requestFullResolution,
             object: nil
         )
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAnimationPlaybackChanged),
-            name: .animationPlaybackChanged,
-            object: nil
-        )
         checkHomeFolderAccess()
     }
 
@@ -205,10 +192,6 @@ final class ImageManager: ObservableObject {
         openImage(url)
     }
 
-    @objc private func handleAnimationPlaybackChanged() {
-        guard currentURL != nil else { return }
-        loadCurrentImage()
-    }
 
     // MARK: - Public API
 
@@ -597,7 +580,6 @@ final class ImageManager: ObservableObject {
             return
         }
         self.currentImage = NSImage(cgImage: rotatedCGImage, size: newSize)
-        self.currentAnimationFrames = []
         self.hasChanges = true
     }
 
@@ -631,7 +613,6 @@ final class ImageManager: ObservableObject {
             return
         }
         self.currentImage = NSImage(cgImage: flippedCGImage, size: size)
-        self.currentAnimationFrames = []
         self.hasChanges = true
     }
 
@@ -647,7 +628,6 @@ final class ImageManager: ObservableObject {
 
         guard let croppedCGImage = cgImage.cropping(to: intersection) else { return }
         self.currentImage = NSImage(cgImage: croppedCGImage, size: intersection.size)
-        self.currentAnimationFrames = []
         self.hasChanges = true
     }
 
@@ -902,7 +882,6 @@ final class ImageManager: ObservableObject {
     func loadCurrentImage(fullResolution: Bool = false) {
         guard let url = currentURL else {
             currentImage = nil
-            currentAnimationFrames = []
             currentImageIsDownsampled = false
             return
         }
@@ -913,10 +892,6 @@ final class ImageManager: ObservableObject {
         let capture = url
         let expectedURL = capture.standardizedFileURL
         isLoading = true
-        if !fullResolution {
-            currentImage = nil
-        }
-        currentAnimationFrames = []
         if fullResolution {
             currentImageIsFullResolution = false
         }
@@ -938,7 +913,6 @@ final class ImageManager: ObservableObject {
                 ))
                 self.currentImageIsDownsampled = decoded.isDownsampled
                 self.currentImageIsFullResolution = !decoded.isDownsampled
-                self.currentAnimationFrames = decoded.frames
             }
             self.isLoading = false
         }
@@ -971,45 +945,10 @@ final class ImageManager: ObservableObject {
             return nil
         }
 
-        var frames: [AnimatedImageFrame] = []
-        if AnimationPlaybackPreference.current(), CGImageSourceGetCount(source) > 1 {
-            frames.reserveCapacity(CGImageSourceGetCount(source))
-            for index in 0..<CGImageSourceGetCount(source) {
-                guard let frameImage = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else {
-                    continue
-                }
-                frames.append(AnimatedImageFrame(
-                    image: frameImage,
-                    duration: frameDuration(source: source, index: index)
-                ))
-            }
-        }
-
         return DecodedImage(
             cgImage: image,
-            isDownsampled: !fullResolution && fullSize > Self.initialDecodeMaxPixelSize,
-            frames: frames.count > 1 ? frames : []
+            isDownsampled: !fullResolution && fullSize > Self.initialDecodeMaxPixelSize
         )
-    }
-
-    nonisolated private static func frameDuration(source: CGImageSource, index: Int) -> TimeInterval {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
-            return 0.1
-        }
-
-        let dictionaries: [[CFString: Any]?] = [
-            properties[kCGImagePropertyGIFDictionary] as? [CFString: Any],
-            properties[kCGImagePropertyWebPDictionary] as? [CFString: Any]
-        ]
-        for dictionary in dictionaries.compactMap({ $0 }) {
-            let unclamped = dictionary[kCGImagePropertyGIFUnclampedDelayTime] as? NSNumber
-            let clamped = dictionary[kCGImagePropertyGIFDelayTime] as? NSNumber
-            let value = unclamped?.doubleValue ?? clamped?.doubleValue
-            if let value, value > 0 {
-                return max(value, 0.02)
-            }
-        }
-        return 0.1
     }
 
     private func presentAlert(title: String, message: String) {
