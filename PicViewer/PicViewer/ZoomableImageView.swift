@@ -218,7 +218,18 @@ struct ZoomableImageView: NSViewRepresentable {
                 pendingDisplayMode = displayMode
                 lastViewportSize = .zero
             } else {
-                layoutDocumentForCurrentState()
+                // Automatic modes depend on the new image aspect ratio. Recompute
+                // their scale instead of carrying the previous image's scale over.
+                switch displayMode {
+                case .shortestEdgeFill, .fitToWindow, .actualSizeOrFit:
+                    pendingDisplayMode = displayMode
+                    lastViewportSize = .zero
+                case .actualSize:
+                    zoomScale = 1.0
+                    layoutDocumentForCurrentState()
+                case .custom:
+                    layoutDocumentForCurrentState()
+                }
             }
             publishViewportSnapshot()
         }
