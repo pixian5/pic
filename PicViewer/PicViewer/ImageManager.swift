@@ -11,6 +11,11 @@ import ImageIO
 @MainActor
 final class ImageManager: ObservableObject {
 
+    private struct DecodedImage {
+        let cgImage: CGImage
+        let isDownsampled: Bool
+    }
+
     struct ImageDetails {
         let name: String
         let path: String
@@ -36,12 +41,20 @@ final class ImageManager: ObservableObject {
     @Published var hasChanges:    Bool      = false
     @Published var hasHomeFolderAccess: Bool = true
 
+    private var folderScanTask: Task<Void, Never>?
+    private var imageLoadTask: Task<Void, Never>?
+    private var folderScanToken = UUID()
+    private var imageLoadGeneration = 0
+    private var currentImageIsDownsampled = false
+    private var currentImageIsFullResolution = false
+
     // MARK: Constants
-    static let supportedExtensions: Set<String> = [
+    nonisolated static let supportedExtensions: Set<String> = [
         "jpg", "jpeg", "png", "webp", "gif",
         "bmp", "tiff", "tif", "heic", "heif"
     ]
     static let launchServicesDomain = "com.apple.LaunchServices/com.apple.launchservices.secure"
+    nonisolated private static let initialDecodeMaxPixelSize = 4096
     // MARK: Computed helpers
     var hasImages:    Bool   { !images.isEmpty }
     var totalCount:   Int    { images.count }
@@ -154,6 +167,12 @@ final class ImageManager: ObservableObject {
             name: .executeCrop,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRequestFullResolution),
+            name: .requestFullResolution,
+            object: nil
+        )
         checkHomeFolderAccess()
     }
 
@@ -163,6 +182,8 @@ final class ImageManager: ObservableObject {
     }
 
     deinit {
+        folderScanTask?.cancel()
+        imageLoadTask?.cancel()
         stopAccessingAll()
     }
 
@@ -175,37 +196,16 @@ final class ImageManager: ObservableObject {
 
     /// Load all supported images from a folder, sorted by filename.
     func loadImages(from folder: URL) {
-        let fm = FileManager.default
-        do {
-            let entries = try fm.contentsOfDirectory(
-                at: folder,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: .skipsHiddenFiles
-            )
-
-            let urls = entries
-                .filter { url in
-                    guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
-                          let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else {
-                        return false
-                    }
-                    return values.isRegularFile == true
-                }
-                .sorted {
-                    $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
-                }
-
-            images    = urls
+        guard let urls = Self.scanImages(in: folder) else {
             folderURL = folder
-            folderAuthorized = true
-        } catch {
-            let nsError = error as NSError
-            if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoPermissionError {
-                folderURL = folder
-                folderAuthorized = false
-                images = []
-            }
+            folderAuthorized = false
+            images = []
+            return
         }
+
+        images = urls
+        folderURL = folder
+        folderAuthorized = true
     }
 
     /// Open a specific image file: load its sibling images and display it.
@@ -221,18 +221,14 @@ final class ImageManager: ObservableObject {
             ? std
             : resolvedFolder.appendingPathComponent(std.lastPathComponent)
         startAccessing(resolvedURL)
-        
-        loadImages(from: resolvedFolder)
 
-        if let idx = images.firstIndex(where: { $0.standardizedFileURL == resolvedURL }) {
-            currentIndex = idx
-        } else {
-            currentIndex = 0
-            if images.isEmpty {
-                images = [resolvedURL]
-            }
-        }
+        // Put the requested file on screen before scanning every sibling in the folder.
+        images = [resolvedURL]
+        currentIndex = 0
+        folderURL = resolvedFolder
+        folderAuthorized = true
         loadCurrentImage()
+        startFolderScan(from: resolvedFolder, preserving: resolvedURL)
     }
 
     /// Navigate to the next image (wraps around).
@@ -281,9 +277,13 @@ final class ImageManager: ObservableObject {
             startAccessing(url)
             saveBookmark(for: url)
             
-            loadImages(from: url)
+            self.folderURL = url
+            folderAuthorized = true
+            images = []
             currentIndex = 0
-            loadCurrentImage()
+            currentImage = nil
+            isLoading = false
+            startFolderScan(from: url, preserving: nil)
         }
     }
 
@@ -406,14 +406,9 @@ final class ImageManager: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url {
             _ = saveBookmark(for: url)
             startAccessing(url)
-            loadImages(from: url)
-            if let keep = keepURL {
-                let keepPath = keep.path
-                if let idx = images.firstIndex(where: { $0.standardizedFileURL.path == keepPath }) {
-                    currentIndex = idx
-                }
-            }
-            loadCurrentImage()
+            self.folderURL = url
+            folderAuthorized = true
+            startFolderScan(from: url, preserving: keepURL)
         }
     }
 
@@ -459,12 +454,74 @@ final class ImageManager: ObservableObject {
 
             let keepURL = currentURL?.standardizedFileURL
             if let folder = folderURL {
-                loadImages(from: folder)
-                if let keep = keepURL,
-                   let idx = images.firstIndex(where: { $0.standardizedFileURL.path == keep.path }) {
-                    currentIndex = idx
+                startFolderScan(from: folder, preserving: keepURL)
+            }
+        }
+    }
+
+    @objc private func handleRequestFullResolution() {
+        guard !currentImageIsFullResolution else { return }
+        loadCurrentImage(fullResolution: true)
+    }
+
+    nonisolated private static func scanImages(in folder: URL) -> [URL]? {
+        do {
+            let entries = try FileManager.default.contentsOfDirectory(
+                at: folder,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: .skipsHiddenFiles
+            )
+
+            return entries
+                .filter { url in
+                    guard Self.supportedExtensions.contains(url.pathExtension.lowercased()),
+                          let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else {
+                        return false
+                    }
+                    return values.isRegularFile == true
                 }
-                loadCurrentImage()
+                .sorted {
+                    $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
+                }
+        } catch {
+            return nil
+        }
+    }
+
+    private func startFolderScan(from folder: URL, preserving selectedURL: URL?) {
+        folderScanTask?.cancel()
+        let token = UUID()
+        folderScanToken = token
+
+        folderScanTask = Task { [weak self, folder, selectedURL] in
+            let result = await Task.detached(priority: .utility) {
+                Self.scanImages(in: folder)
+            }.value
+
+            guard let self,
+                  !Task.isCancelled,
+                  self.folderScanToken == token else { return }
+
+            guard let result else {
+                self.folderAuthorized = false
+                return
+            }
+
+            self.folderAuthorized = true
+            if let selectedURL,
+               !result.contains(where: { $0.standardizedFileURL == selectedURL.standardizedFileURL }) {
+                self.images = [selectedURL] + result
+            } else {
+                self.images = result
+            }
+            if let selectedURL,
+               let index = self.images.firstIndex(where: { $0.standardizedFileURL == selectedURL.standardizedFileURL }) {
+                self.currentIndex = index
+            } else {
+                self.currentIndex = 0
+                if selectedURL == nil {
+                    self.loadCurrentImage()
+                }
             }
         }
     }
@@ -821,27 +878,79 @@ final class ImageManager: ObservableObject {
 
     // MARK: - Private helpers
 
-    func loadCurrentImage() {
+    func loadCurrentImage(fullResolution: Bool = false) {
         guard let url = currentURL else {
             currentImage = nil
+            currentImageIsDownsampled = false
             return
         }
-        isLoading    = true
-        currentImage = nil
-        let capture  = url
-        let expectedURL = capture.standardizedFileURL
 
-        Task { [weak self, capture, expectedURL] in
-            let img = await Task.detached(priority: .userInitiated) {
-                NSImage(contentsOf: capture)
+        imageLoadTask?.cancel()
+        imageLoadGeneration += 1
+        let generation = imageLoadGeneration
+        let capture = url
+        let expectedURL = capture.standardizedFileURL
+        isLoading = true
+        if !fullResolution {
+            currentImage = nil
+        }
+        if fullResolution {
+            currentImageIsFullResolution = false
+        }
+
+        imageLoadTask = Task { [weak self, capture, expectedURL] in
+            let decoded = await Task.detached(priority: .userInitiated) {
+                Self.decodeImage(at: capture, fullResolution: fullResolution)
             }.value
 
-            // Only apply if we're still on the same image
-            guard let self else { return }
-            guard self.currentURL?.standardizedFileURL == expectedURL else { return }
-            self.currentImage = img
-            self.isLoading    = false
+            guard let self,
+                  !Task.isCancelled,
+                  self.imageLoadGeneration == generation,
+                  self.currentURL?.standardizedFileURL == expectedURL else { return }
+
+            if let decoded {
+                self.currentImage = NSImage(cgImage: decoded.cgImage, size: NSSize(
+                    width: decoded.cgImage.width,
+                    height: decoded.cgImage.height
+                ))
+                self.currentImageIsDownsampled = decoded.isDownsampled
+                self.currentImageIsFullResolution = !decoded.isDownsampled
+            }
+            self.isLoading = false
         }
+    }
+
+    nonisolated private static func decodeImage(at url: URL, fullResolution: Bool) -> DecodedImage? {
+        let isSecurityScoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if isSecurityScoped {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        let width = (properties?[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue ?? 0
+        let height = (properties?[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue ?? 0
+        let fullSize = max(width, height)
+        let maxPixelSize = fullResolution
+            ? max(fullSize, Self.initialDecodeMaxPixelSize)
+            : Self.initialDecodeMaxPixelSize
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+
+        return DecodedImage(
+            cgImage: image,
+            isDownsampled: !fullResolution && fullSize > Self.initialDecodeMaxPixelSize
+        )
     }
 
     private func presentAlert(title: String, message: String) {

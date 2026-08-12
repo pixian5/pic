@@ -465,6 +465,7 @@ struct ZoomableImageView: NSViewRepresentable {
             guard let scrollView else { return }
             displayMode = .custom
             pendingDisplayMode = nil
+            NotificationCenter.default.post(name: .requestFullResolution, object: nil)
             updateZoomScalePreservingViewport(min(zoomScale * 1.25, scrollView.maxMagnification))
         }
 
@@ -479,6 +480,7 @@ struct ZoomableImageView: NSViewRepresentable {
             guard imageNaturalSize.width > 0, imageNaturalSize.height > 0 else { return }
             displayMode = .actualSize
             pendingDisplayMode = nil
+            NotificationCenter.default.post(name: .requestFullResolution, object: nil)
             updateZoomScalePreservingViewport(1.0)
         }
 
