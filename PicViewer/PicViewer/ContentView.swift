@@ -554,7 +554,9 @@ struct ContentView: View {
 
     private func updateWindowTitle() {
         guard let window = NSApp.windows.first else { return }
-        window.title = imageManager.currentURL?.lastPathComponent ?? "PicViewer"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let name = imageManager.currentURL?.lastPathComponent ?? "PicViewer"
+        window.title = "\(name) - v\(version)"
         updateTitlebarCountAccessory(for: window)
     }
 

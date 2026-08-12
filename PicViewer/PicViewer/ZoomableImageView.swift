@@ -304,14 +304,12 @@ struct ZoomableImageView: NSViewRepresentable {
 
         func fitToWindow() {
             guard let scrollView else { return }
-            let viewportSize = scrollView.contentSize
-            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
-                  viewportSize.width > 0, viewportSize.height > 0 else { return }
+            guard let fitScale = ImageDisplayGeometry.containScale(
+                imageSize: imageNaturalSize,
+                viewportSize: currentViewportSize
+            ) else { return }
 
-            zoomScale = min(
-                viewportSize.width / imageNaturalSize.width,
-                viewportSize.height / imageNaturalSize.height
-            ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
+            zoomScale = fitScale.clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
             displayMode = .fitToWindow
             pendingDisplayMode = nil
             layoutDocumentForCurrentState()
@@ -320,14 +318,12 @@ struct ZoomableImageView: NSViewRepresentable {
 
         func showImageUsingShortestEdge() {
             guard let scrollView else { return }
-            let viewportSize = scrollView.contentSize
-            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
-                  viewportSize.width > 0, viewportSize.height > 0 else { return }
+            guard let fillScale = ImageDisplayGeometry.coverScale(
+                imageSize: imageNaturalSize,
+                viewportSize: currentViewportSize
+            ) else { return }
 
-            zoomScale = max(
-                viewportSize.width / imageNaturalSize.width,
-                viewportSize.height / imageNaturalSize.height
-            ).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
+            zoomScale = fillScale.clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
             displayMode = .shortestEdgeFill
             pendingDisplayMode = nil
             layoutDocumentForCurrentState()
@@ -337,11 +333,9 @@ struct ZoomableImageView: NSViewRepresentable {
         func applyDisplayModeIfNeeded(force: Bool = false) {
             let modeToApply = pendingDisplayMode ?? (force ? displayMode : nil)
             guard let mode = modeToApply else { return }
-            guard let scrollView else { return }
-            let viewportSize = scrollView.contentSize
-            guard viewportSize.width > 0, viewportSize.height > 0 else { return }
-
-            pendingDisplayMode = nil
+            guard scrollView != nil,
+                  currentViewportSize.width > 0,
+                  currentViewportSize.height > 0 else { return }
 
             switch mode {
             case .shortestEdgeFill:
@@ -358,9 +352,10 @@ struct ZoomableImageView: NSViewRepresentable {
         }
 
         func handleViewportDidChange() {
-            let viewportSize = scrollView?.contentSize ?? .zero
-            let viewportChanged = viewportSize != lastViewportSize
-            lastViewportSize = viewportSize
+            let newViewportSize = currentViewportSize
+            guard newViewportSize.width > 0, newViewportSize.height > 0 else { return }
+            let viewportChanged = newViewportSize != lastViewportSize
+            lastViewportSize = newViewportSize
 
             switch displayMode {
             case .shortestEdgeFill, .fitToWindow, .actualSizeOrFit:
@@ -381,7 +376,6 @@ struct ZoomableImageView: NSViewRepresentable {
 
         func layoutDocumentForCurrentState() {
             guard !isUpdatingLayout,
-                  let scrollView,
                   let documentView,
                   let imageView else { return }
 
@@ -390,7 +384,7 @@ struct ZoomableImageView: NSViewRepresentable {
 
             guard imageNaturalSize.width > 0, imageNaturalSize.height > 0 else { return }
 
-            let visibleSize = scrollView.contentView.bounds.size
+            let visibleSize = currentViewportSize
             let displayedImageSize = NSSize(
                 width: imageNaturalSize.width * zoomScale,
                 height: imageNaturalSize.height * zoomScale
@@ -420,7 +414,7 @@ struct ZoomableImageView: NSViewRepresentable {
                   let documentView = scrollView.documentView else { return }
 
             let documentSize = documentView.frame.size
-            let visibleSize = scrollView.contentSize
+            let visibleSize = currentViewportSize
             let origin = NSPoint(
                 x: max(0, (documentSize.width - visibleSize.width) / 2),
                 y: max(0, (documentSize.height - visibleSize.height) / 2)
@@ -513,20 +507,20 @@ struct ZoomableImageView: NSViewRepresentable {
 
         @objc func zoomActualSizeOrFit() {
             guard let scrollView else { return }
-            let viewportSize = scrollView.contentSize
-            guard imageNaturalSize.width > 0, imageNaturalSize.height > 0,
-                  viewportSize.width > 0, viewportSize.height > 0 else { return }
-
-            let fitScale = min(
-                viewportSize.width / imageNaturalSize.width,
-                viewportSize.height / imageNaturalSize.height
-            )
+            guard let fitScale = ImageDisplayGeometry.containScale(
+                imageSize: imageNaturalSize,
+                viewportSize: currentViewportSize
+            ) else { return }
 
             displayMode = .actualSizeOrFit
             pendingDisplayMode = nil
             zoomScale = min(1.0, fitScale).clamped(to: scrollView.minMagnification...scrollView.maxMagnification)
             layoutDocumentForCurrentState()
             centerDocument()
+        }
+
+        private var currentViewportSize: CGSize {
+            scrollView?.contentView.bounds.size ?? .zero
         }
 
         @objc func zoomFit() {

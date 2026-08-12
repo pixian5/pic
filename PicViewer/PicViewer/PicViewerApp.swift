@@ -161,7 +161,10 @@ struct SettingsView: View {
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     /// Weak reference so terminate can consult dirty state without retaining the model forever.
-    weak var imageManager: ImageManager?
+    weak var imageManager: ImageManager? {
+        didSet { flushPendingOpenURLs() }
+    }
+    private var pendingOpenURLs: [URL] = []
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
@@ -177,10 +180,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return canLeave ? .terminateNow : .terminateCancel
     }
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        queueOpenURLs(CommandLine.arguments.dropFirst().compactMap(URL.init(fileURLWithPath:)))
+    }
+
     /// Called when a file is opened via Finder (double-click, Open With…)
     func application(_ application: NSApplication, open urls: [URL]) {
-        guard let url = urls.first else { return }
-        NotificationCenter.default.post(name: .openImageURL, object: url)
+        queueOpenURLs(urls)
+    }
+
+    private func queueOpenURLs(_ urls: [URL]) {
+        let imageURLs = urls.filter { url in
+            guard ImageManager.supportedExtensions.contains(url.pathExtension.lowercased()) else { return false }
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && !isDirectory.boolValue
+        }
+        pendingOpenURLs.append(contentsOf: imageURLs)
+        flushPendingOpenURLs()
+    }
+
+    private func flushPendingOpenURLs() {
+        guard imageManager != nil else { return }
+        let urls = pendingOpenURLs
+        pendingOpenURLs.removeAll()
+        for url in urls {
+            NotificationCenter.default.post(name: .openImageURL, object: url)
+        }
     }
 }
 
